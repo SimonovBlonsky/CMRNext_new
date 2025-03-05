@@ -10,3 +10,20 @@ Repository providing the source code for the paper
 <p align="center">
   <img src="assets/overview.png" alt="Overview of Teleop" width="1200" />
 </p>
+
+If you use CMRNext, please cite:
+```
+@article{cattaneo2025cmrnext,
+    title={CMRNext: Camera to LiDAR Matching in the Wild for Localization and Extrinsic Calibration}, 
+    author={Daniele Cattaneo and Abhinav Valada},
+    journal={IEEE Transactions on Robotics}, 
+    year={2025},
+}
+```
+
+## Contacts
+* [Daniele Cattaneo](https://rl.uni-freiburg.de/people/cattaneo)
+* [Abhinav Valada](https://rl.uni-freiburg.de/people/valada)
+
+## License
+For academic usage, the code is released under the [GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html) license. For any commercial purpose, please contact the authors.
