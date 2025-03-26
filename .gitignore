@@ -1,0 +1,14 @@
+/dataset
+/venv
+/__pycache__
+*.tar
+.idea*
+!.idea/runConfigurations/
+/build/
+/visibility_pkg/visibility.egg-info/
+*.so
+*.o
+*.egg
+*.pyc
+.vscode/*
+wandb/*
