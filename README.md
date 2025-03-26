@@ -109,26 +109,52 @@ docker run --runtime=nvidia -it -v /tmp/.X11-unix:/tmp/.X11-unix -v PATH_TO_DATA
 - Within the container, move to the code folder `cd /root/CMRNext/`
 
 Finally, run the inference, assuming the weights and the datasets are located under `\data\ `, change the paths according to your setup.
+<details>
+<summary>KITTI left camera:</summary>
 
-KITTI left camera:
 ```bash
 python3 evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder /data/KITTI/sequences/ --dataset kitti
 ```
+Example results:
+<p align="center">
+  <img src="assets/results_kitti_left.png" alt="Overview of Teleop" width="1200" />
+</p>
+</details>
 
-KITTI right camera:
+
+<details>
+<summary>KITTI right camera:</summary>
+
 ```bash
 python3 evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder /data/KITTI/sequences/ --dataset kitti --cam 3
 ```
+</details>
 
-Argoverse V1:
+<details>
+<summary>Argoverse V1:</summary>
+
 ```bash
 python3 evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder /data/argoverse/argoverse-tracking/ --dataset argoverse
 ```
+Example results:
+<p align="center">
+  <img src="assets/results_argoverse.png" alt="Overview of Teleop" width="1200" />
+</p>
+</details>
 
-Pandaset:
+<details>
+<summary>Pandaset:</summary>
+
 ```bash
 python3 evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder /data/pandaset/ --dataset pandaset
 ```
+</details>
+
+## Acknowledgement
+In our work and experiments, we have used components from other works. We thank the authors for open-sourcing their code.
+- RAFT: https://github.com/princeton-vl/RAFT
+- CMRNet: https://github.com/cattaneod/CMRNet
+- https://github.com/dilaragokay/central-tendency-rotations/
 
 ## Contacts
 * [Daniele Cattaneo](https://rl.uni-freiburg.de/people/cattaneo)
