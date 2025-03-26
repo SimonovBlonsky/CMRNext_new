@@ -3,14 +3,6 @@ import math
 import numpy as np
 import torch
 
-def diff1(q, r):
-    """
-        Distanza che approssima quella esatta usando acos
-
-    """
-    dot = np.dot(q, r)
-    return 2*np.math.acos(np.math.fabs(dot))
-
 
 def quatmultiply(q, r, device='cpu'):
     """
@@ -69,15 +61,6 @@ def quaternion_loss(q, r, device):
     """
     t = quatmultiply(q, quatinv(r), device)
     return 2 * torch.atan2(torch.norm(t[:, 1:], dim=1), torch.abs(t[:, 0]))
-
-
-def diff3(q, r):
-    """
-        Distanza Approssimata
-
-    """
-    dot = np.dot(q, r)
-    return 1. - np.abs(dot)
 
 
 def rotation_from_quaternion(x):
