@@ -90,7 +90,7 @@ Please download the model weights for camera-LiDAR extrinsic calibration from th
 - Model weights: https://calibration.cs.uni-freiburg.de/downloads/cmrnext_weights.zip
 
 ## Camera-LiDAR Extrinsic Calibration
-The best way to run
+The best way to run CMRNext is by using Docker. Given the endless variability in system setups, many things can go wrong when configuring the environment manually. If you choose not to use Docker, it may be difficult for me to help troubleshoot any issues you encounter.
 
 ### Docker
 Install [Docker](https://docs.docker.com/engine/install/) and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
