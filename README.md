@@ -17,7 +17,7 @@ Repository providing the source code for the paper
 >IEEE Transactions on Robotics, 2025.  
 
 <p align="center">
-  <img src="assets/overview.png" alt="Overview of Teleop" width="1200" />
+  <img src="assets/overview.png" alt="Overview of CMRNext" width="1200" />
 </p>
 
 If you use CMRNext, please cite:
@@ -34,8 +34,8 @@ If you use CMRNext, please cite:
 ```
 
 ## Release Status
-- [x] 2025/03/25 We released the ROS code for camera-LiDAR extrinsic calibration on KITTI using [MDPCalib](https://github.com/robot-learning-freiburg/MDPCalib/), which combines CMRNext with graph optimization.
-- [x] 2025/03/26 - We released the [inference code for extrinsic calibration](#Camera-LiDAR-Extrinsic-Calibration)
+- [x] 2025/03/25 — We released the ROS code for camera-LiDAR extrinsic calibration on KITTI using [MDPCalib](https://github.com/robot-learning-freiburg/MDPCalib/), which combines CMRNext with graph optimization.
+- [x] 2025/03/26 — We released the [inference code for extrinsic calibration](#Camera-LiDAR-Extrinsic-Calibration).
 - [ ] Localization inference code
 - [ ] Training code
 
@@ -117,7 +117,7 @@ python3 evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.ta
 ```
 Example results:
 <p align="center">
-  <img src="assets/results_kitti_left.png" alt="Overview of Teleop" width="1200" />
+  <img src="assets/results_kitti_left.png" alt="KITTI left" width="1200" />
 </p>
 </details>
 
@@ -128,6 +128,10 @@ Example results:
 ```bash
 python3 evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder /data/KITTI/sequences/ --dataset kitti --cam 3
 ```
+Example results:
+<p align="center">
+  <img src="assets/results_kitti_right.png" alt="KITTI right" width="1200" />
+</p>
 </details>
 
 <details>
@@ -138,7 +142,7 @@ python3 evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.ta
 ```
 Example results:
 <p align="center">
-  <img src="assets/results_argoverse.png" alt="Overview of Teleop" width="1200" />
+  <img src="assets/results_argoverse.png" alt="Argoverse" width="1200" />
 </p>
 </details>
 
@@ -148,6 +152,10 @@ Example results:
 ```bash
 python3 evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder /data/pandaset/ --dataset pandaset
 ```
+Example results:
+<p align="center">
+  <img src="assets/results_pandaset.png" alt="Pandaset" width="1200" />
+</p>
 </details>
 
 ## Acknowledgement
