@@ -46,6 +46,7 @@ RUN cd build && make install
 
 RUN pip3 install torch-scatter torch-sparse==0.6.13 -f https://data.pyg.org/whl/torch-1.11.0+cu113
 RUN pip3 install --no-deps git+https://github.com/argoverse/argoverse-api.git
+RUN apt-get update && apt-get install -y libgl1
 COPY ./ /root/CMRNext
 WORKDIR /root/CMRNext
 RUN pip3 install -r requirements.txt
