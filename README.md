@@ -87,8 +87,8 @@ An alternative download is available at [Kaggle](https://www.kaggle.com/datasets
 ## Downloading model weights for extrinsic calibration
 
 Please download the model weights for camera-LiDAR extrinsic calibration and for monocular localization in LiDAR maps and store them under: `/data/`.
-- Calibration model weights: https://calibration.cs.uni-freiburg.de/downloads/cmrnext_weights.zip
-- Localization model weights: 
+- Calibration model weights: https://cmrnext.cs.uni-freiburg.de/downloads/cmrnext_calibration_weights.zip
+- Localization model weights: https://cmrnext.cs.uni-freiburg.de/downloads/cmrnext_localization_weights.zip
 
 ## Docker
 The best way to run CMRNext is by using Docker. Given the endless variability in system setups, many things can go wrong when configuring the environment manually. If you choose not to use Docker, it may be difficult for me to help troubleshoot any issues you encounter.
@@ -194,7 +194,7 @@ Run the inference for monocular localization in LiDAR maps within the Docker con
 <summary>KITTI:</summary>
 
 ```bash
-python3 evaluate_flow_localization.py --weights /data/cmrnext-localization-iter1.tar /data/cmrnext-localization-iter2.tar /data/cmrnext-localization-iter3.tar --data_folder /data/KITTI/sequences/ --dataset kitti
+python3 evaluate_flow_localization.py --weights /data/cmrnext-iter1.tar /data/cmrnext-iter2.tar /data/cmrnext-iter3.tar --data_folder /data/KITTI/sequences/ --dataset kitti
 ```
 </details>
 
