@@ -104,7 +104,7 @@ def get_extrinsic_pandaset(camera):
 class DatasetGeneralExtrinsicCalib(Dataset):
 
     def __init__(self, dataset_dirs, transform=None, augmentation=False, use_reflectance=False, max_t=2., max_r=10.,
-                 train=True, normalize_images=True, dataset='kitti', cam='2'):
+                 train=True, normalize_images=True, dataset='kitti', cam='2', change_frame=False):
         super(DatasetGeneralExtrinsicCalib, self).__init__()
         self.dataset = dataset
         self.use_reflectance = use_reflectance
@@ -119,6 +119,7 @@ class DatasetGeneralExtrinsicCalib(Dataset):
         self.extension = None
         self.cam = str(cam)
         self.camera_folder = f'image_{cam}'
+        self.change_frame = change_frame
         if dataset == 'kitti':
             self.maps_folder = 'velodyne'
             self.extension = '.bin'
@@ -204,7 +205,8 @@ class DatasetGeneralExtrinsicCalib(Dataset):
 
         pc_in = torch.from_numpy(pc.astype(np.float32))
         pc_in = torch.mm(cam2vel, pc_in.t())
-        pc_in = pc_in[[2, 0, 1, 3], :]
+        if self.change_frame:
+            pc_in = pc_in[[2, 0, 1, 3], :]
 
         img = Image.open(img_path)
         h_mirror = False
@@ -237,8 +239,13 @@ class DatasetGeneralExtrinsicCalib(Dataset):
         transl_y = np.random.uniform(-self.max_t, self.max_t)
         transl_z = np.random.uniform(-self.max_t, min(self.max_t, 1.))
 
-        R = mathutils.Euler((rotx, roty, rotz), 'XYZ')
-        T = mathutils.Vector((transl_x, transl_y, transl_z))
+        if self.change_frame:
+            R = mathutils.Euler((rotx, roty, rotz), 'XYZ')
+            T = mathutils.Vector((transl_x, transl_y, transl_z))
+        else:
+            R = mathutils.Euler((roty, rotz, rotx), 'XYZ')
+            T = mathutils.Vector((transl_y, transl_z, transl_x))
+
 
         R, T = invert_pose(R, T)
         R, T = torch.tensor(R), torch.tensor(T)
@@ -254,7 +261,7 @@ class DatasetGeneralExtrinsicCalib(Dataset):
 class DatasetPandasetExtrinsicCalib(Dataset):
 
     def __init__(self, dataset_dirs, transform=None, augmentation=False, use_reflectance=False, max_t=2., max_r=10.,
-                 train=True, normalize_images=True, sensor_id=0, camera='front_camera'):
+                 train=True, normalize_images=True, sensor_id=0, camera='front_camera', change_frame=False):
         super(DatasetPandasetExtrinsicCalib, self).__init__()
         self.use_reflectance = use_reflectance
         self.max_r = max_r
@@ -272,6 +279,8 @@ class DatasetPandasetExtrinsicCalib(Dataset):
         self.all_files = []
         self.camera_poses = []
         self.camera_stamps = []
+
+        self.change_frame = change_frame
 
         if not isinstance(dataset_dirs, list):
             dataset_dirs = [dataset_dirs]
@@ -332,7 +341,8 @@ class DatasetPandasetExtrinsicCalib(Dataset):
         cam_pose = torch.from_numpy(self.camera_poses[idx]).float().inverse()
         pc_in = torch.from_numpy(pc.astype(np.float32))
         pc_in = torch.mm(cam_pose, pc_in.t())
-        pc_in = pc_in[[2, 0, 1, 3], :]
+        if self.change_frame:
+            pc_in = pc_in[[2, 0, 1, 3], :]
 
         cam2vel = get_extrinsic_pandaset(self.camera)
 
@@ -366,8 +376,12 @@ class DatasetPandasetExtrinsicCalib(Dataset):
         transl_y = np.random.uniform(-self.max_t, self.max_t)
         transl_z = np.random.uniform(-self.max_t, min(self.max_t, 1.))
 
-        R = mathutils.Euler((rotx, roty, rotz), 'XYZ')
-        T = mathutils.Vector((transl_x, transl_y, transl_z))
+        if self.change_frame:
+            R = mathutils.Euler((rotx, roty, rotz), 'XYZ')
+            T = mathutils.Vector((transl_x, transl_y, transl_z))
+        else:
+            R = mathutils.Euler((roty, rotz, rotx), 'XYZ')
+            T = mathutils.Vector((transl_y, transl_z, transl_x))
 
         R, T = invert_pose(R, T)
         R, T = torch.tensor(R), torch.tensor(T)

@@ -26,7 +26,7 @@ from models.get_model import get_model
 from quaternion_distances import quaternion_loss
 
 import matplotlib.pyplot as plt
-from utils import (downsample_depth, merge_inputs, get_flow, quat2mat, tvector2mat,
+from utils import (downsample_depth, merge_inputs, get_flow_zforward, quat2mat, tvector2mat,
                    quaternion_from_matrix, EndPointError, rotate_forward,
                    average_quaternions, rotate_back, quaternion_mode, str2bool)
 
@@ -53,11 +53,11 @@ def quaternion_distance(q, r):
     return dist
 
 
-def prepare_input(cam_params, pc_rotated, real_shape, reflectance, _config):
+def prepare_input(cam_params, pc_rotated, real_shape, reflectance, _config, change_frame=False):
     cam_model = CameraModel()
     cam_model.focal_length = cam_params[:2]
     cam_model.principal_point = cam_params[2:]
-    uv, depth, _, refl = cam_model.project_pytorch(pc_rotated, real_shape, reflectance)
+    uv, depth, _, refl = cam_model.project_pytorch(pc_rotated, real_shape, reflectance, change_frame)
     uv = uv.t().int().contiguous()
     depth_img = torch.zeros(real_shape[:2], device='cuda', dtype=torch.float)
     depth_img += 1000.
@@ -318,10 +318,10 @@ def evaluate_calibration(_config, seed):
             cam_model.focal_length = cam_params[:2]
             cam_model.principal_point = cam_params[2:]
 
-            flow, points_3D, new_indexes = get_flow(uv.float(), depth[indexes], RT1_inv, cam_model,
-                                                    [real_shape[0], real_shape[1], 3],
-                                                    scale_flow=False, al_contrario=_config['al_contrario'],
-                                                    get_valid_indexes=True)
+            flow, points_3D, new_indexes = get_flow_zforward(uv.float(), depth[indexes], RT1_inv, cam_model,
+                                                             [real_shape[0], real_shape[1], 3],
+                                                             scale_flow=False, al_contrario=_config['al_contrario'],
+                                                             get_valid_indexes=True)
 
             uv = uv[new_indexes].clone()
             flow = flow[new_indexes].clone()
@@ -416,9 +416,9 @@ def evaluate_calibration(_config, seed):
             points_2d = new_uv.cpu().numpy()
             obj_coord = points_3D[valid_indexes][valid_indexes2][:, :3].cpu().numpy()
             obj_coord_zforward = np.zeros(obj_coord.shape)
-            obj_coord_zforward[:, 0] = obj_coord[:, 1]
-            obj_coord_zforward[:, 1] = obj_coord[:, 2]
-            obj_coord_zforward[:, 2] = obj_coord[:, 0]
+            obj_coord_zforward[:, 0] = obj_coord[:, 0]
+            obj_coord_zforward[:, 1] = obj_coord[:, 1]
+            obj_coord_zforward[:, 2] = obj_coord[:, 2]
             cam_mat = cam_model.get_matrix()
 
             torch.cuda.synchronize()
@@ -448,7 +448,7 @@ def evaluate_calibration(_config, seed):
                                               200, 2., cam_mat.astype(np.float32)
                                               )
 
-            transl = cuda_pnp[0, [2, 0, 1]]
+            transl = cuda_pnp[0, [0, 1, 2]]
             rot_mat = cuda_pnp[:, 3:6].T
             rot_mat, _ = cv2.Rodrigues(rot_mat)
 
@@ -462,7 +462,6 @@ def evaluate_calibration(_config, seed):
             rot_mat = torch.tensor(rot_mat)
 
             pred_quaternion = quaternion_from_matrix(rot_mat)
-            pred_quaternion = pred_quaternion[[0, 3, 1, 2]]  # Z-forward to X-forward
 
             R_predicted = quat2mat(pred_quaternion).cuda()
             T_predicted = tvector2mat(transl)
@@ -484,7 +483,6 @@ def evaluate_calibration(_config, seed):
             # Compute final cam lidar predicted matrix
             points_3D_orig = torch.mm(extrinsic_prediction[-2].to(points_3D.device), points_3D[valid_indexes].T).T
             points_3D_orig = torch.mm(extrinsic_error[0], points_3D_orig.T).T
-            points_3D_orig = points_3D_orig[:, [1, 2, 0, 3]]
             points_3D_orig = rotate_back(points_3D_orig, sample['cam2vel'][0].to(points_3D_orig.device))
             final_correspondences = new_uv, points_3D_orig
             cuda_pnp_final = cv2.pythoncuda.cudaPnP(
@@ -516,10 +514,10 @@ def evaluate_calibration(_config, seed):
             depth_img_no_occlusion, uv, indexes, depth = prepare_input(cam_params, rotated_point_cloud, real_shape,
                                                                        reflectance, _config)
 
-            flow, points_3D, new_indexes = get_flow(uv.float(), depth[indexes], extrinsic_error[-1].inverse(), cam_model,
-                                                    [real_shape[0], real_shape[1], 3],
-                                                    scale_flow=False, al_contrario=_config['al_contrario'],
-                                                    get_valid_indexes=True)
+            flow, points_3D, new_indexes = get_flow_zforward(uv.float(), depth[indexes], extrinsic_error[-1].inverse(),
+                                                             cam_model, [real_shape[0], real_shape[1], 3],
+                                                             scale_flow=False, al_contrario=_config['al_contrario'],
+                                                             get_valid_indexes=True)
 
             uv = uv[new_indexes].clone()
             flow = flow[new_indexes].clone()
@@ -575,7 +573,7 @@ def evaluate_calibration(_config, seed):
     console.print(table)
 
     table = Table(show_header=True, header_style="bold magenta", box=box.MINIMAL_HEAVY_HEAD, title_style="bold red")
-    table.title = f"Temporal Aggregation Results on {_config['dataset']}, camera {_config['cam']}"
+    table.title = f"Temporal Aggregation Results on {_config['dataset']}"
     table.add_column("Aggregation Measure", max_width=13)
     table.add_column("Translation Error (cm)", justify="center")
     table.add_column("Rotation Error (˚)", justify="center")

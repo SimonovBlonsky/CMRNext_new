@@ -8,15 +8,19 @@ class CameraModel:
         self.focal_length = focal_length
         self.principal_point = principal_point
 
-    def project_pytorch(self, xyz: torch.Tensor, image_size, reflectance=None):
+    def project_pytorch(self, xyz: torch.Tensor, image_size, reflectance=None, change_frame=False):
         if xyz.shape[0] == 3:
             xyz = torch.cat([xyz, torch.ones(1, xyz.shape[1], device=xyz.device)])
         else:
             if not torch.all(xyz[3, :] == 1.):
                 xyz[3, :] = 1.
                 # raise TypeError("Wrong Coordinates")
-        order = [1, 2, 0, 3]
-        xyzw = xyz[order, :]
+        if change_frame:
+            order = [1, 2, 0, 3]
+            xyzw = xyz[order, :]
+        else:
+            order = [0, 1, 2, 3]
+            xyzw = xyz[order, :]
         indexes = xyzw[2, :] >= 0
         if reflectance is not None:
             reflectance = reflectance[:, indexes]

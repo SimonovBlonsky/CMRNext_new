@@ -443,6 +443,50 @@ def get_flow(uv, depth, RT, cam_model, image_shape, scale_flow=True, get_valid_i
         return flow.clone(), points_3D.clone()
 
 
+def get_flow_zforward(uv, depth, RT, cam_model, image_shape, scale_flow=True, get_valid_indexes=False, al_contrario=True):
+    points_3D = torch.zeros((uv.shape[0], 4),
+                            device=uv.device, dtype=torch.float)
+
+    # depth to 3D (X-forward)
+    points_3D[:, 0] = (uv[:, 0] - cam_model.principal_point[0]) * depth / cam_model.focal_length[0]  # Y
+    points_3D[:, 1] = (uv[:, 1] - cam_model.principal_point[1]) * depth / cam_model.focal_length[1]  # Z
+    points_3D[:, 2] = depth
+    points_3D[:, 3] = 1.
+
+    pc_rotated = rotate_forward(points_3D.clone(), RT)
+
+    uv_rgb = torch.zeros((uv.shape[0], 2), device=uv.device, dtype=torch.float)
+    uv_rgb[:, 0] = cam_model.focal_length[0] * pc_rotated[:, 0] / pc_rotated[:, 2] + cam_model.principal_point[0]
+    uv_rgb[:, 1] = cam_model.focal_length[1] * pc_rotated[:, 1] / pc_rotated[:, 2] + cam_model.principal_point[1]
+
+    if al_contrario:
+        flow = uv - uv_rgb
+    else:
+        flow = uv_rgb - uv
+    flow[uv_rgb < 0] = 0.
+    flow[uv_rgb[:, 0] >= image_shape[1]] = 0.
+    flow[uv_rgb[:, 1] >= image_shape[0]] = 0.
+
+    valid_index = torch.ones_like(flow[:, 0]).bool()
+    valid_index = valid_index & (uv_rgb[:, 0] >= 0)
+    valid_index = valid_index & (uv_rgb[:, 1] >= 0)
+    valid_index = valid_index & (uv_rgb[:, 0] < image_shape[1])
+    valid_index = valid_index & (uv_rgb[:, 1] < image_shape[0])
+
+    # Remove small flow
+    flow[abs(flow) < 0.5] = 0
+
+    # PWC-Net divides the flow by 20
+    if scale_flow:
+        flow /= 20.
+
+    # valid_index = ((flow[:, 0] != 0.) & (flow[:, 1] != 0.))
+    if get_valid_indexes:
+        return flow.clone(), points_3D.clone(), valid_index
+    else:
+        return flow.clone(), points_3D.clone()
+
+
 def project_points_pose(xyzw, hyp_pose, cam_mat, real_uv):
     """
 

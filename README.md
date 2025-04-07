@@ -86,13 +86,13 @@ An alternative download is available at [Kaggle](https://www.kaggle.com/datasets
 
 ## Downloading model weights for extrinsic calibration
 
-Please download the model weights for camera-LiDAR extrinsic calibration from this link and store them under: `/data/`.
-- Model weights: https://calibration.cs.uni-freiburg.de/downloads/cmrnext_weights.zip
+Please download the model weights for camera-LiDAR extrinsic calibration and for monocular localization in LiDAR maps and store them under: `/data/`.
+- Calibration model weights: https://calibration.cs.uni-freiburg.de/downloads/cmrnext_weights.zip
+- Localization model weights: 
 
-## Camera-LiDAR Extrinsic Calibration
+## Docker
 The best way to run CMRNext is by using Docker. Given the endless variability in system setups, many things can go wrong when configuring the environment manually. If you choose not to use Docker, it may be difficult for me to help troubleshoot any issues you encounter.
 
-### Docker
 Install [Docker](https://docs.docker.com/engine/install/) and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 Tested with `Docker version 28.0.1` and `NVIDIA Container Toolkit version 1.17.5-1`
 
@@ -108,7 +108,11 @@ docker run --runtime=nvidia -it -v /tmp/.X11-unix:/tmp/.X11-unix -v PATH_TO_DATA
 ```
 - Within the container, move to the code folder `cd /root/CMRNext/`
 
-Finally, run the inference, assuming the weights and the datasets are located under `\data\ `, change the paths according to your setup.
+## Camera-LiDAR Extrinsic Calibration
+
+### Inference
+
+Run the inference for camera-LiDAR extrinsic calibration, assuming the weights and the datasets are located under `\data\ `, change the paths according to your setup. Click on the specific dataset to see the exact command to run.
 <details>
 <summary>KITTI left camera:</summary>
 
@@ -157,6 +161,74 @@ Example results:
   <img src="assets/results_pandaset.png" alt="Pandaset" width="1200" />
 </p>
 </details>
+
+## Monocular Localization in LiDAR Maps
+This section contains the steps to perform inference for monocular localization in LiDAR maps. First, we need to create the LiDAR maps for each dataset.
+
+### LiDAR Map Generation
+
+#### KITTI
+To generate the LiDAR maps of the KITTI dataset, run the following commands one after the other:
+
+```bash
+python3 -m preprocess.kitti_maps_semantic --base_folder /data/KITTI/ --sequence 00
+python3 -m preprocess.kitti_maps_semantic --base_folder /data/KITTI/ --sequence 03
+python3 -m preprocess.kitti_maps_semantic --base_folder /data/KITTI/ --sequence 04
+python3 -m preprocess.kitti_maps_semantic --base_folder /data/KITTI/ --sequence 05
+python3 -m preprocess.kitti_maps_semantic --base_folder /data/KITTI/ --sequence 06
+python3 -m preprocess.kitti_maps_semantic --base_folder /data/KITTI/ --sequence 07
+python3 -m preprocess.kitti_maps_semantic --base_folder /data/KITTI/ --sequence 08
+python3 -m preprocess.kitti_maps_semantic --base_folder /data/KITTI/ --sequence 09
+```
+
+#### Argoverse
+TODO
+
+#### Pandaset
+TODO
+
+### Inference
+
+Run the inference for monocular localization in LiDAR maps within the Docker container, assuming the weights and the datasets are located under `\data\ `. Change the paths according to your setup. Click on the specific dataset to see the exact command to run.
+<details>
+<summary>KITTI:</summary>
+
+```bash
+python3 evaluate_flow_localization.py --weights /data/cmrnext-localization-iter1.tar /data/cmrnext-localization-iter2.tar /data/cmrnext-localization-iter3.tar --data_folder /data/KITTI/sequences/ --dataset kitti
+```
+</details>
+
+## Troubleshooting
+
+In this section we cover common problems and how to solve them.
+<details>
+<summary>docker: Error response from daemon: Unknown runtime specified nvidia.</summary>
+
+If you receive this error while starting the docker
+
+```bash
+docker: Error response from daemon: Unknown runtime specified nvidia.
+```
+Run the docker with this command instead:
+```bash
+docker run --gpus=all -it -v /tmp/.X11-unix:/tmp/.X11-unix -v PATH_TO_DATA:/data -e DISPLAY -e XAUTHORITY -e NVIDIA_DRIVER_CAPABILITIES=all cmrnext
+```
+</details>
+
+<details>
+<summary>RuntimeError: DataLoader worker (pid xxxx) is killed by signal: Bus error. It is possible that dataloader's workers are out of shared memory. Please try to raise your shared memory limit.</summary>
+
+If you receive this error while running the training/inference script
+
+```bash
+RuntimeError: DataLoader worker (pid xxxx) is killed by signal: Bus error. It is possible that dataloader's workers are out of shared memory. Please try to raise your shared memory limit.
+```
+Delete the docker image, and create it again adding more shared memory by adding this flag
+```bash
+--shm-size=2g
+```
+</details>
+
 
 ## Acknowledgement
 In our work and experiments, we have used components from other works. We thank the authors for open-sourcing their code.
