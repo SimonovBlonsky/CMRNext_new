@@ -36,7 +36,8 @@ If you use CMRNext, please cite:
 ## Release Status
 - [x] 2025/03/25 — We released the ROS code for camera-LiDAR extrinsic calibration on KITTI using [MDPCalib](https://github.com/robot-learning-freiburg/MDPCalib/), which combines CMRNext with graph optimization.
 - [x] 2025/03/26 — We released the [inference code for extrinsic calibration](#Camera-LiDAR-Extrinsic-Calibration).
-- [ ] Localization inference code
+- [x] 2025/04/07 - We released the [inference code for monocular localization on KITTI](#Monocular-Localization-in-LiDAR-Maps)
+- [ ] Localization inference code on Argoverse and Pandaset
 - [ ] Training code
 
 
