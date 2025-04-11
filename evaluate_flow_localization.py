@@ -18,7 +18,7 @@ from rich import box
 from torch import nn
 from tqdm import tqdm
 
-from datasets.DatasetGeneral import DatasetGeneral
+from datasets.DatasetGeneral import DatasetGeneral, DatasetGeneralSingleMapPerSequence
 from camera_model import CameraModel
 from evaluate_flow_calibration import prepare_input
 
@@ -132,7 +132,11 @@ def evaluate_localization(_config, seed):
     if _config['dataset'] == 'pandaset':
         raise NotImplementedError("Pandaset dataset will be released soon")
     elif _config['dataset'] == 'argoverse':
-        raise NotImplementedError("Argoverse dataset will be released soon")
+        dataset_val = DatasetGeneralSingleMapPerSequence(test_directories, train=False, max_r=_config['max_r'],
+                                                         max_t=_config['max_t'],
+                                                         use_reflectance=_config['use_reflectance'],
+                                                         normalize_images=_config['normalize_images'],
+                                                         image_folder='ring_front_center')
     else:
         dataset_val = DatasetGeneral(test_directories, train=False, max_r=_config['max_r'], max_t=_config['max_t'],
                                      use_reflectance=_config['use_reflectance'], normalize_images=_config['normalize_images'],

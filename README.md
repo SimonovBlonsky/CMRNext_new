@@ -37,7 +37,8 @@ If you use CMRNext, please cite:
 - [x] 2025/03/25 — We released the ROS code for camera-LiDAR extrinsic calibration on KITTI using [MDPCalib](https://github.com/robot-learning-freiburg/MDPCalib/), which combines CMRNext with graph optimization.
 - [x] 2025/03/26 — We released the [inference code for extrinsic calibration](#Camera-LiDAR-Extrinsic-Calibration).
 - [x] 2025/04/07 - We released the [inference code for monocular localization on KITTI](#Monocular-Localization-in-LiDAR-Maps)
-- [ ] Localization inference code on Argoverse and Pandaset
+- [x] 2025/04/11 - We released the [inference code for monocular localization on Argoverse](#Monocular-Localization-in-LiDAR-Maps)
+- [ ] Localization inference code on Pandaset
 - [ ] Training code
 
 
@@ -183,7 +184,11 @@ python3 -m preprocess.kitti_maps_semantic --base_folder /data/KITTI/ --sequence 
 ```
 
 #### Argoverse
-TODO
+To generate the LiDAR maps of the Argoverse dataset, run the following command:
+
+```bash
+python3 -m preprocess.argoverse --base_folder /data/argoverse/argoverse-tracking
+```
 
 #### Pandaset
 TODO
@@ -196,6 +201,14 @@ Run the inference for monocular localization in LiDAR maps within the Docker con
 
 ```bash
 python3 evaluate_flow_localization.py --weights /data/cmrnext-iter1.tar /data/cmrnext-iter2.tar /data/cmrnext-iter3.tar --data_folder /data/KITTI/sequences/ --dataset kitti
+```
+</details>
+
+<details>
+<summary>Argoverse:</summary>
+
+```bash
+python3 evaluate_flow_localization.py --weights /data/cmrnext-iter1.tar /data/cmrnext-iter2.tar /data/cmrnext-iter3.tar --data_folder /data/KITTI/argoverse/argoverse_tracking/ --dataset argoverse
 ```
 </details>
 
