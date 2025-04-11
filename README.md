@@ -208,7 +208,7 @@ python3 evaluate_flow_localization.py --weights /data/cmrnext-iter1.tar /data/cm
 <summary>Argoverse:</summary>
 
 ```bash
-python3 evaluate_flow_localization.py --weights /data/cmrnext-iter1.tar /data/cmrnext-iter2.tar /data/cmrnext-iter3.tar --data_folder /data/KITTI/argoverse/argoverse_tracking/ --dataset argoverse
+python3 evaluate_flow_localization.py --weights /data/cmrnext-iter1.tar /data/cmrnext-iter2.tar /data/cmrnext-iter3.tar --data_folder /data/argoverse/argoverse_tracking/ --dataset argoverse
 ```
 </details>
 
