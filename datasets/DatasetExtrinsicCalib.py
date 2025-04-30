@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 from math import radians
 
 import cv2
@@ -44,6 +45,93 @@ def read_calib_file(filepath):
                 pass
 
     return data
+
+
+# Generic point cloud reader from https://github.com/PRBonn/kiss-icp
+def _get_point_cloud_reader(file_extension, first_scan_file):
+        """Attempt to guess with try/catch blocks which is the best point cloud reader to use for
+        the given dataset folder. Supported readers so far are:
+            - np.fromfile
+            - trimesh.load
+            - PyntCloud
+            - open3d[optional]
+        """
+        # This is easy, the old KITTI format
+        if file_extension == "bin":
+            print("[WARNING] Reading .bin files, the only format supported is the KITTI format")
+
+            class ReadKITTI:
+                def __call__(self, file):
+                    return np.fromfile(file, dtype=np.float32).reshape((-1, 4))
+
+            return ReadKITTI()
+
+        print('Trying to guess how to read your data')
+        # first try open3d
+        try:
+            import open3d as o3d
+
+            try_pcd = o3d.t.io.read_point_cloud(first_scan_file)
+            if try_pcd.is_empty():
+                # open3d binding does not raise an exception if file is unreadable or extension is not supported
+                raise Exception("Generic Dataloader| Open3d PointCloud file is empty")
+
+            stamps_keys = ["t", "timestamp", "timestamps", "time", "stamps"]
+            stamp_field = None
+            for key in stamps_keys:
+                try:
+                    try_pcd.point[key]
+                    stamp_field = key
+                    print("Generic Dataloader| found timestamps")
+                    break
+                except:
+                    continue
+
+            class ReadOpen3d:
+                def __init__(self, time_field):
+                    self.time_field = time_field
+                    if self.time_field is None:
+                        self.get_timestamps = lambda _: np.array([])
+                    else:
+                        self.get_timestamps = lambda pcd: pcd.point[self.time_field].numpy().ravel()
+
+                def __call__(self, file):
+                    pcd = o3d.t.io.read_point_cloud(file)
+                    points = pcd.point.positions.numpy()
+                    return points, self.get_timestamps(pcd)
+
+            return ReadOpen3d(stamp_field)
+        except:
+            pass
+
+        try:
+            import trimesh
+
+            trimesh.load(first_scan_file)
+
+            class ReadTriMesh:
+                def __call__(self, file):
+                    return np.asarray(trimesh.load(file).vertices), np.array([])
+
+            return ReadTriMesh()
+        except:
+            pass
+
+        try:
+            from pyntcloud import PyntCloud
+
+            PyntCloud.from_file(first_scan_file)
+
+            class ReadPynt:
+                def __call__(self, file):
+                    return PyntCloud.from_file(file).points[["x", "y", "z"]].to_numpy(), np.array(
+                        []
+                    )
+
+            return ReadPynt()
+        except:
+            print("[ERROR], File format not supported")
+            sys.exit(1)
 
 
 def get_scan_kitti(path, cam='2', kitti=None):
@@ -104,7 +192,8 @@ def get_extrinsic_pandaset(camera):
 class DatasetGeneralExtrinsicCalib(Dataset):
 
     def __init__(self, dataset_dirs, transform=None, augmentation=False, use_reflectance=False, max_t=2., max_r=10.,
-                 train=True, normalize_images=True, dataset='kitti', cam='2', change_frame=False):
+                 train=True, normalize_images=True, dataset='kitti', cam='2', change_frame=False,
+                 camera_intrinsics=None):
         super(DatasetGeneralExtrinsicCalib, self).__init__()
         self.dataset = dataset
         self.use_reflectance = use_reflectance
@@ -127,7 +216,9 @@ class DatasetGeneralExtrinsicCalib(Dataset):
             self.maps_folder = 'lidar'
             self.extension = '.ply'
             self.sdbs = {}
-
+        elif dataset == 'custom':
+            self.maps_folder = 'lidar'
+            self.camera_folder = 'camera'
         self.all_files = []
 
         if not isinstance(dataset_dirs, list):
@@ -145,7 +236,19 @@ class DatasetGeneralExtrinsicCalib(Dataset):
                 for filename in sorted_filenames:
                     self.all_files.append(os.path.join(point_cloud_folder, filename))
 
-            if dataset == 'kitti':
+            if dataset == 'custom':
+                with open(os.path.join(directory, 'calibration.yaml')) as f:
+                    file_data = yaml.safe_load(f)
+                self.camera_intrinsics = torch.tensor(
+                    [file_data['fx'], file_data['fy'], file_data['cx'], file_data['cy']])
+                self.initial_extrinsic = torch.tensor(file_data['initial_extrinsic'], dtype=torch.float).reshape(4, 4)
+                first_scan = os.listdir(os.path.join(directory, self.maps_folder))
+                first_scan = sorted(first_scan)[0]
+                self.extension = os.path.splitext(first_scan)[1]
+                self.point_cloud_reader = _get_point_cloud_reader(self.extension[1:],
+                                                                  os.path.join(directory, self.maps_folder, first_scan))
+
+            if dataset == 'kitti' or dataset == 'custom':
                 img_folder = os.path.join(directory, self.camera_folder)
                 point_cloud_folder = os.path.join(directory, self.maps_folder)
 
@@ -175,7 +278,7 @@ class DatasetGeneralExtrinsicCalib(Dataset):
         return len(self.all_files)
 
     def __getitem__(self, idx):
-        if self.dataset == 'kitti':
+        if self.dataset == 'kitti' or self.dataset == 'custom':
             img_path = self.all_files[idx]
             extension = os.path.basename(img_path)
             extension = os.path.splitext(extension)[1]
@@ -198,6 +301,13 @@ class DatasetGeneralExtrinsicCalib(Dataset):
             img_path = img_path.replace(splitted_path[-1], f'{self.cam}_{cam_timestamp}.jpg')
 
             pc, cam2vel, calib = get_scan_argo(pc_path, self.cam)
+        elif self.dataset == 'custom':
+            pc = self.point_cloud_reader(pc_path)
+            cam2vel = self.initial_extrinsic
+            calib = self.camera_intrinsics
+            # TODO: If shape 3, add homogeneous coordinate
+            # if pc.shape[1] == 3:
+            #     torch.cat([pc, torch.ones(1, pc.shape[1], device=pc.device)])
 
         if self.use_reflectance:
             reflectance = torch.from_numpy(pc[:, -1]).float()

@@ -7,6 +7,7 @@ from matplotlib import cm
 from rich.console import Console
 from rich.table import Table
 from rich import box
+from PIL import Image
 
 import cv2
 import numpy as np
@@ -27,7 +28,7 @@ from quaternion_distances import quaternion_loss
 
 import matplotlib.pyplot as plt
 from utils import (downsample_depth, merge_inputs, get_flow_zforward, quat2mat, tvector2mat,
-                   quaternion_from_matrix, EndPointError, rotate_forward,
+                   quaternion_from_matrix, EndPointError, rotate_forward, quaternion_median,
                    average_quaternions, rotate_back, quaternion_mode, str2bool)
 
 torch.backends.cudnn.benchmark = True
@@ -91,7 +92,7 @@ def prepare_input(cam_params, pc_rotated, real_shape, reflectance, _config, chan
 def downsample_and_pad(_config, rgb, depth_img_no_occlusion, img_shape, real_shape, flow_img, flow_mask):
     shape_pad = [0, 0, 0, 0]
 
-    if _config['dataset'] in ['argoverse', 'pandaset']:
+    if _config['dataset'] in ['argoverse', 'pandaset'] or _config['downsample']:
         rgb = nn.functional.interpolate(rgb.unsqueeze(0), scale_factor=0.5)[0]
         depth_img_no_occlusion = downsample_depth(depth_img_no_occlusion.permute(1, 2, 0).contiguous(), 2)
         depth_img_no_occlusion = depth_img_no_occlusion.permute(2, 0, 1)
@@ -203,6 +204,17 @@ def evaluate_calibration(_config, seed):
         else:
             assert _config['cam'] in ['front_camera'],\
                 f"Camera {_config['cam']} not supported for the {_config['dataset']} dataset"
+    elif _config['dataset'] == 'custom':
+        val_directories.append(base_dir)
+        first_camera_path = os.listdir(os.path.join(_config['data_folder'], 'camera'))[0]
+        first_camera_frame = np.asarray(Image.open(os.path.join(_config['data_folder'], 'camera', first_camera_path)))
+        img_shape = [first_camera_frame.shape[0], first_camera_frame.shape[1]]
+        if _config['downsample']:
+            img_shape = [img_shape[0] // 2, img_shape[1] // 2]
+        if img_shape[0] % 64 > 0:
+            img_shape[0] = 64 * ((img_shape[0] // 64) + 1)
+        if img_shape[1] % 64 > 0:
+            img_shape[1] = 64 * ((img_shape[1] // 64) + 1)
     else:
         raise RuntimeError("Dataset unknown")
 
@@ -226,6 +238,11 @@ def evaluate_calibration(_config, seed):
                                                     use_reflectance=_config['use_reflectance'],
                                                     normalize_images=_config['normalize_images'],
                                                     sensor_id=0, camera=_config['cam'])
+    elif _config['dataset'] == 'custom':
+        dataset_val = DatasetGeneralExtrinsicCalib(val_directories, train=False, max_r=_config['max_r'],
+                                                   max_t=_config['max_t'], use_reflectance=_config['use_reflectance'],
+                                                   normalize_images=_config['normalize_images'],
+                                                   dataset=_config['dataset'], cam=_config['cam'])
 
     def init_fn(x):
         return _init_fn(x, seed)
@@ -363,7 +380,7 @@ def evaluate_calibration(_config, seed):
                 predicted_flow, predicted_uncertainty = predicted_flow
                 inference_time.append(time2 - time1)
                 # Upsample if necessary
-                if _config['dataset'] in ['argoverse', 'pandaset']:
+                if _config['dataset'] in ['argoverse', 'pandaset'] or _config['downsample']:
                     predicted_flow = list(predicted_flow)
                     for scale in range(len(predicted_flow)):
                         predicted_flow[scale] *= 2
@@ -483,7 +500,8 @@ def evaluate_calibration(_config, seed):
             # Compute final cam lidar predicted matrix
             points_3D_orig = torch.mm(extrinsic_prediction[-2].to(points_3D.device), points_3D[valid_indexes].T).T
             points_3D_orig = torch.mm(extrinsic_error[0], points_3D_orig.T).T
-            points_3D_orig = rotate_back(points_3D_orig, sample['cam2vel'][0].to(points_3D_orig.device))
+            # points_3D_orig = rotate_back(points_3D_orig, sample['cam2vel'][0].to(points_3D_orig.device))
+            points_3D_orig = rotate_forward(points_3D_orig, sample['cam2vel'][0].to(points_3D_orig.device))
             final_correspondences = new_uv, points_3D_orig
             cuda_pnp_final = cv2.pythoncuda.cudaPnP(
                 final_correspondences[1][:, :3].cpu().numpy().astype(np.float32).copy(),
@@ -498,7 +516,8 @@ def evaluate_calibration(_config, seed):
             R_predicted_final[:3, :3] = rot_mat_final.clone().detach()
             # Final prediction by CMRNet (for each iteration)
             RT_predicted_final = torch.mm(T_predicted_final, R_predicted_final)
-            final_calib_RTs[iteration + 1].append(RT_predicted_final.inverse())
+            # final_calib_RTs[iteration + 1].append(RT_predicted_final.inverse())
+            final_calib_RTs[iteration + 1].append(RT_predicted_final)
 
             if T_composed.norm().item() > 4.:
                 # Prediction has failed for this frame
@@ -537,11 +556,12 @@ def evaluate_calibration(_config, seed):
             lidar_input = depth_img_no_occlusion.unsqueeze(0)
 
             try:
-                tbar.set_postfix(t_mean=torch.tensor(errors_t[-1]).mean().item(),
-                                 t_median=torch.tensor(errors_t[-1]).median().item(),
-                                 r_mean=torch.tensor(errors_r[-1]).mean().item(),
-                                 r_median=torch.tensor(errors_r[-1]).median().item(),
-                                 epe_mean=torch.tensor(epe[0]).mean().item())
+                if _config['dataset'] != 'custom':
+                    tbar.set_postfix(t_mean=torch.tensor(errors_t[-1]).mean().item(),
+                                     t_median=torch.tensor(errors_t[-1]).median().item(),
+                                     r_mean=torch.tensor(errors_r[-1]).mean().item(),
+                                     r_median=torch.tensor(errors_r[-1]).median().item(),
+                                     epe_mean=torch.tensor(epe[0]).mean().item())
             except:
                 pass
 
@@ -551,92 +571,124 @@ def evaluate_calibration(_config, seed):
         errors_t[iteration] = torch.tensor(errors_t[iteration])
         errors_r[iteration] = torch.tensor(errors_r[iteration])
 
-    console = Console()
-    table = Table(show_header=True, header_style="bold magenta", box=box.MINIMAL_HEAVY_HEAD, title_style="bold red")
-    table.title = f"CMRNext Results on {_config['dataset']}, camera {_config['cam']}"
-    table.add_column("Iteration")
-    table.add_column("Median Translation error (cm)", justify="center", max_width=20)
-    table.add_column("Median Rotation error (˚)", justify="center", max_width=20)
-    table.add_row(
-        f"Initial Pose",
-        f"{errors_t[0].median().item() * 100:.2f}",
-        f"{errors_r[0].median().item():.2f}"
-    )
-    for iteration in range(1, len(_config['weights']) + 1):
+    if _config['dataset'] == 'custom':
+        iteration = len(_config['weights'])
+        final_quats = np.stack([quaternion_from_matrix(t) for t in final_calib_RTs[iteration]])
+        avg_quaternion = torch.from_numpy(average_quaternions(final_quats))
+        median_quaternion = quaternion_median(torch.tensor(np.stack(final_quats)))
+        mode_quaternion = quaternion_mode(final_quats, 4)
+
+        avg_translation = torch.stack(final_calib_RTs[iteration])[:, :3, 3].mean(0)
+        median_translation = torch.stack(final_calib_RTs[iteration])[:, :3, 3].median(0)[0]
+        mode_translation = quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 2)
+
+        R = quat2mat(avg_quaternion)
+        T = tvector2mat(avg_translation)
+        avg_extrinsic_calib = torch.mm(T, R)
+        torch.set_printoptions(5, sci_mode=False)
+        print("Predicted extrinsic calibration using average aggregation:")
+        print(avg_extrinsic_calib)
+
+        R = quat2mat(median_quaternion)
+        T = tvector2mat(median_translation)
+        median_extrinsic_calib = torch.mm(T, R)
+        torch.set_printoptions(5, sci_mode=False)
+        print("Predicted extrinsic calibration using median aggregation:")
+        print(median_extrinsic_calib)
+
+        R = quat2mat(mode_quaternion)
+        T = tvector2mat(mode_translation)
+        mode_extrinsic_calib = torch.mm(T, R)
+        print("Predicted extrinsic calibration using mode aggregation:")
+        print(mode_extrinsic_calib)
+
+    else:
+        console = Console()
+        table = Table(show_header=True, header_style="bold magenta", box=box.MINIMAL_HEAVY_HEAD, title_style="bold red")
+        table.title = f"CMRNext Results on {_config['dataset']}, camera {_config['cam']}"
+        table.add_column("Iteration")
+        table.add_column("Median Translation error (cm)", justify="center", max_width=20)
+        table.add_column("Median Rotation error (˚)", justify="center", max_width=20)
         table.add_row(
-            f"Iteration {iteration}",
-            f"{errors_t[iteration].median().item()*100:.2f}",
-            f"{errors_r[iteration].median().item():.2f}"
+            f"Initial Pose",
+            f"{errors_t[0].median().item() * 100:.2f}",
+            f"{errors_r[0].median().item():.2f}"
         )
-    print("")
-    print("")
-    console.print(table)
+        for iteration in range(1, len(_config['weights']) + 1):
+            table.add_row(
+                f"Iteration {iteration}",
+                f"{errors_t[iteration].median().item()*100:.2f}",
+                f"{errors_r[iteration].median().item():.2f}"
+            )
+        print("")
+        print("")
+        console.print(table)
 
-    table = Table(show_header=True, header_style="bold magenta", box=box.MINIMAL_HEAVY_HEAD, title_style="bold red")
-    table.title = f"Temporal Aggregation Results on {_config['dataset']}"
-    table.add_column("Aggregation Measure", max_width=13)
-    table.add_column("Translation Error (cm)", justify="center")
-    table.add_column("Rotation Error (˚)", justify="center")
+        table = Table(show_header=True, header_style="bold magenta", box=box.MINIMAL_HEAVY_HEAD, title_style="bold red")
+        table.title = f"Temporal Aggregation Results on {_config['dataset']}"
+        table.add_column("Aggregation Measure", max_width=13)
+        table.add_column("Translation Error (cm)", justify="center")
+        table.add_column("Rotation Error (˚)", justify="center")
 
-    iteration = len(_config['weights'])
-    final_quats = np.stack([quaternion_from_matrix(t) for t in final_calib_RTs[iteration]])
-    r_error_avg = quaternion_distance(
-        torch.from_numpy(average_quaternions(final_quats)),
-        quaternion_from_matrix(sample['cam2vel'][0])
-    )
-    # r_error_median = quaternion_distance(
-    #     quaternion_median(np.stack(final_quats)),
-    #     quaternion_from_matrix(sample['cam2vel'][0])
-    # )
-    r_error_mode = quaternion_distance(
-        quaternion_mode(final_quats, 4),
-        quaternion_from_matrix(sample['cam2vel'][0])
-    )
-    if r_error_mode > quaternion_distance(
-            quaternion_mode(final_quats, 3),
+        iteration = len(_config['weights'])
+        final_quats = np.stack([quaternion_from_matrix(t) for t in final_calib_RTs[iteration]])
+        r_error_avg = quaternion_distance(
+            torch.from_numpy(average_quaternions(final_quats)),
             quaternion_from_matrix(sample['cam2vel'][0])
-    ):
+        )
+        # r_error_median = quaternion_distance(
+        #     quaternion_median(np.stack(final_quats)),
+        #     quaternion_from_matrix(sample['cam2vel'][0])
+        # )
         r_error_mode = quaternion_distance(
-            quaternion_mode(final_quats, 3),
+            quaternion_mode(final_quats, 4),
             quaternion_from_matrix(sample['cam2vel'][0])
         )
+        if r_error_mode > quaternion_distance(
+                quaternion_mode(final_quats, 3),
+                quaternion_from_matrix(sample['cam2vel'][0])
+        ):
+            r_error_mode = quaternion_distance(
+                quaternion_mode(final_quats, 3),
+                quaternion_from_matrix(sample['cam2vel'][0])
+            )
 
-    t_error_avg = (torch.stack(final_calib_RTs[iteration])[:, :3, 3].mean(0)
-                   - sample['cam2vel'][0][:3, 3]).norm() * 100.
-    t_error_median = (torch.stack(final_calib_RTs[iteration])[:, :3, 3].median(0)[0]
-                      - sample['cam2vel'][0][:3, 3]).norm() * 100.
-    t_error_mode = (quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 2)
-                    - sample['cam2vel'][0][:3, 3]).norm() * 100.
-    if t_error_mode > (quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 1)
-                        - sample['cam2vel'][0][:3, 3]).norm() * 100.:
-        t_error_mode = (quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 1)
+        t_error_avg = (torch.stack(final_calib_RTs[iteration])[:, :3, 3].mean(0)
+                       - sample['cam2vel'][0][:3, 3]).norm() * 100.
+        t_error_median = (torch.stack(final_calib_RTs[iteration])[:, :3, 3].median(0)[0]
+                          - sample['cam2vel'][0][:3, 3]).norm() * 100.
+        t_error_mode = (quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 2)
                         - sample['cam2vel'][0][:3, 3]).norm() * 100.
-    table.add_row(
-        "Mean",
-        f"[bold green]{t_error_avg.item():.2f}[/bold green]" if t_error_avg.item() <= t_error_median.item() and
-                                                    t_error_avg.item() <= t_error_mode.item() else
-        f"{t_error_avg.item():.2f}",
-        f"[bold green]{r_error_avg:.2f}[/bold green]"if r_error_avg <= r_error_mode else
-        f"{r_error_avg:.2f}",
-    )
-    table.add_row(
-        "Median",
-        f"[bold green]{t_error_median.item():.2f}[/bold green]" if t_error_median.item() <= t_error_avg.item() and
-                                                       t_error_median.item() <= t_error_mode.item() else
-        f"{t_error_median.item():.2f}",
-        f"---"
-    )
-    table.add_row(
-        "Mode",
-        f"[bold green]{t_error_mode.item():.2f}[/bold green]" if t_error_mode.item() <= t_error_avg.item() and
-                                                       t_error_mode.item() <= t_error_median.item() else
-        f"{t_error_mode.item():.2f}",
-        f"[bold green]{r_error_mode:.2f}[/bold green]"if r_error_mode <= r_error_avg else
-        f"{r_error_mode:.2f}"
-    )
-    print("")
-    print("")
-    console.print(table)
+        if t_error_mode > (quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 1)
+                            - sample['cam2vel'][0][:3, 3]).norm() * 100.:
+            t_error_mode = (quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 1)
+                            - sample['cam2vel'][0][:3, 3]).norm() * 100.
+        table.add_row(
+            "Mean",
+            f"[bold green]{t_error_avg.item():.2f}[/bold green]" if t_error_avg.item() <= t_error_median.item() and
+                                                        t_error_avg.item() <= t_error_mode.item() else
+            f"{t_error_avg.item():.2f}",
+            f"[bold green]{r_error_avg:.2f}[/bold green]"if r_error_avg <= r_error_mode else
+            f"{r_error_avg:.2f}",
+        )
+        table.add_row(
+            "Median",
+            f"[bold green]{t_error_median.item():.2f}[/bold green]" if t_error_median.item() <= t_error_avg.item() and
+                                                           t_error_median.item() <= t_error_mode.item() else
+            f"{t_error_median.item():.2f}",
+            f"---"
+        )
+        table.add_row(
+            "Mode",
+            f"[bold green]{t_error_mode.item():.2f}[/bold green]" if t_error_mode.item() <= t_error_avg.item() and
+                                                           t_error_mode.item() <= t_error_median.item() else
+            f"{t_error_mode.item():.2f}",
+            f"[bold green]{r_error_mode:.2f}[/bold green]"if r_error_mode <= r_error_avg else
+            f"{r_error_mode:.2f}"
+        )
+        print("")
+        print("")
+        console.print(table)
 
     if _config['save_file'] is not None:
         torch.save(errors_t, f'./{_config["save_file"]}_errors_t.torch')
@@ -657,6 +709,7 @@ def main():
     parser.add_argument('--deterministic', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--save_file', type=str, nargs='?', default=None)
     parser.add_argument('--quantile', type=float, default=1.0)
+    parser.add_argument('--downsample', type=str2bool, nargs='?', const=True, default=False)
 
     args = parser.parse_args()
     _config = vars(args)
