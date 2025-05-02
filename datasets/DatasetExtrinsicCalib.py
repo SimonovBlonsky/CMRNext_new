@@ -305,9 +305,13 @@ class DatasetGeneralExtrinsicCalib(Dataset):
             pc = self.point_cloud_reader(pc_path)
             cam2vel = self.initial_extrinsic
             calib = self.camera_intrinsics
-            # TODO: If shape 3, add homogeneous coordinate
-            # if pc.shape[1] == 3:
-            #     torch.cat([pc, torch.ones(1, pc.shape[1], device=pc.device)])
+            if pc.shape[1] == 3:
+                pc = np.concatenate((pc, np.ones((pc.shape[0], 1))), 1)
+            elif pc.shape[1] >= 4:
+                pc = pc[:, :4]
+            else:
+                print("[ERROR], Point cloud has less than 3 channels")
+                sys.exit(1)
 
         if self.use_reflectance:
             reflectance = torch.from_numpy(pc[:, -1]).float()
