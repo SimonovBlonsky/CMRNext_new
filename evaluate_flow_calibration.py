@@ -3,7 +3,7 @@ import math
 import os
 import random
 import time
-from matplotlib import cm
+from matplotlib import cm, rcParams
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -29,8 +29,9 @@ from quaternion_distances import quaternion_loss
 import matplotlib.pyplot as plt
 from utils import (downsample_depth, merge_inputs, get_flow_zforward, quat2mat, tvector2mat,
                    quaternion_from_matrix, EndPointError, rotate_forward, quaternion_median,
-                   average_quaternions, rotate_back, quaternion_mode, str2bool)
+                   average_quaternions, rotate_back, quaternion_mode, str2bool, overlay_imgs)
 
+rcParams["figure.raise_window"] = False
 torch.backends.cudnn.benchmark = True
 torch.use_deterministic_algorithms(False)
 
@@ -146,6 +147,10 @@ def evaluate_calibration(_config, seed):
 
     checkpoint = torch.load(_config['weights'][0], map_location='cpu')
 
+    f, axarr = plt.subplots(2, 1)
+    axarr[0].set_title('Initial Calibration')
+    axarr[1].set_title('CMRNext Estimated Calibration')
+
     _config['network'] = checkpoint['config']['network']
     _config['use_reflectance'] = checkpoint['config']['use_reflectance']
     _config['initial_pool'] = checkpoint['config']['initial_pool']
@@ -186,7 +191,7 @@ def evaluate_calibration(_config, seed):
         if _config['cam'] is None:
             _config['cam'] = 'ring_front_center'
         else:
-            assert _config['cam'] in ['ring_front_center'],\
+            assert _config['cam'] in ['ring_front_center'], \
                 f"Camera {_config['cam']} not supported for the {_config['dataset']} dataset"
     elif 'kitti' in _config['dataset']:
         img_shape = (384, 1280)  # Multiple of 64
@@ -195,14 +200,14 @@ def evaluate_calibration(_config, seed):
         if _config['cam'] is None:
             _config['cam'] = '2'
         else:
-            assert str(_config['cam']) in ['2', '3'],\
+            assert str(_config['cam']) in ['2', '3'], \
                 f"Camera {_config['cam']} not supported for the {_config['dataset']} dataset"
     elif _config['dataset'] == 'pandaset':
         img_shape = (576, 1920 // 2)  # Multiple of 64 inference at scale 0.5
         if _config['cam'] is None:
             _config['cam'] = 'front_camera'
         else:
-            assert _config['cam'] in ['front_camera'],\
+            assert _config['cam'] in ['front_camera'], \
                 f"Camera {_config['cam']} not supported for the {_config['dataset']} dataset"
     elif _config['dataset'] == 'custom':
         val_directories.append(base_dir)
@@ -252,7 +257,7 @@ def evaluate_calibration(_config, seed):
     batch_size = 1  # This code is designed for a batch size of 1, don't change this!
 
     TestImgLoader = torch.utils.data.DataLoader(dataset=dataset_val,
-                                                shuffle=True,
+                                                shuffle=False,
                                                 batch_size=batch_size,
                                                 num_workers=num_worker,
                                                 worker_init_fn=init_fn,
@@ -357,6 +362,10 @@ def evaluate_calibration(_config, seed):
             # flow_mask containts 1 in pixels that have a point projected
             flow_mask = torch.zeros((real_shape[0], real_shape[1]), device='cuda', dtype=torch.int)
             flow_mask[uv[:, 1], uv[:, 0]] = 1
+
+            if _config['viz']:
+                viz_initial = overlay_imgs(rgb, depth_img_no_occlusion[-1].unsqueeze(0).unsqueeze(0), max_depth=0.5,
+                                           close_thr=1000)
 
             points_3D = points_3D[new_indexes].clone()
             rgb, depth_img_no_occlusion, flow_img, flow_mask = downsample_and_pad(_config, rgb, depth_img_no_occlusion,
@@ -555,6 +564,32 @@ def evaluate_calibration(_config, seed):
             rgb_input = rgb.unsqueeze(0)
             lidar_input = depth_img_no_occlusion.unsqueeze(0)
 
+            if _config['viz'] and iteration == len(_config['weights']) - 1:
+                gt_uv, gt_depth, _, _ = cam_model.project_pytorch(rotated_point_cloud, real_shape, reflectance)
+                gt_uv = gt_uv.t().int().contiguous()
+
+                new_depth_img = torch.zeros(real_shape[:2], device='cuda', dtype=torch.float)
+                new_depth_img += 1000.
+                new_depth_img = visibility.depth_image(gt_uv.int().contiguous(), gt_depth, new_depth_img,
+                                                       gt_uv.shape[0],
+                                                       real_shape[1], real_shape[0])
+                new_depth_img[new_depth_img == 1000.] = 0.
+
+                new_depth_img_no_occlusion = torch.zeros_like(new_depth_img, device='cuda')
+                new_depth_img_no_occlusion = visibility.visibility2(new_depth_img, cam_params,
+                                                                    new_depth_img_no_occlusion,
+                                                                    new_depth_img.shape[1], new_depth_img.shape[0],
+                                                                    _config['occlusion_threshold'],
+                                                                    _config['occlusion_kernel'])
+                lidar_flow = new_depth_img_no_occlusion.unsqueeze(0).unsqueeze(0)
+                viz_final = overlay_imgs(sample['rgb'][idx].cuda(), lidar_flow, max_depth=_config['max_depth'] / 2,
+                                         close_thr=1000)
+
+                axarr[0].imshow(viz_initial)
+                axarr[1].imshow(viz_final)
+                plt.draw()
+                plt.pause(0.01)
+
             try:
                 if _config['dataset'] != 'custom':
                     tbar.set_postfix(t_mean=torch.tensor(errors_t[-1]).mean().item(),
@@ -617,7 +652,7 @@ def evaluate_calibration(_config, seed):
         for iteration in range(1, len(_config['weights']) + 1):
             table.add_row(
                 f"Iteration {iteration}",
-                f"{errors_t[iteration].median().item()*100:.2f}",
+                f"{errors_t[iteration].median().item() * 100:.2f}",
                 f"{errors_r[iteration].median().item():.2f}"
             )
         print("")
@@ -660,30 +695,30 @@ def evaluate_calibration(_config, seed):
         t_error_mode = (quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 2)
                         - sample['cam2vel'][0][:3, 3]).norm() * 100.
         if t_error_mode > (quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 1)
-                            - sample['cam2vel'][0][:3, 3]).norm() * 100.:
+                           - sample['cam2vel'][0][:3, 3]).norm() * 100.:
             t_error_mode = (quaternion_mode(torch.stack(final_calib_RTs[iteration])[:, :3, 3], 1)
                             - sample['cam2vel'][0][:3, 3]).norm() * 100.
         table.add_row(
             "Mean",
             f"[bold green]{t_error_avg.item():.2f}[/bold green]" if t_error_avg.item() <= t_error_median.item() and
-                                                        t_error_avg.item() <= t_error_mode.item() else
+                                                                    t_error_avg.item() <= t_error_mode.item() else
             f"{t_error_avg.item():.2f}",
-            f"[bold green]{r_error_avg:.2f}[/bold green]"if r_error_avg <= r_error_mode else
+            f"[bold green]{r_error_avg:.2f}[/bold green]" if r_error_avg <= r_error_mode else
             f"{r_error_avg:.2f}",
         )
         table.add_row(
             "Median",
             f"[bold green]{t_error_median.item():.2f}[/bold green]" if t_error_median.item() <= t_error_avg.item() and
-                                                           t_error_median.item() <= t_error_mode.item() else
+                                                                       t_error_median.item() <= t_error_mode.item() else
             f"{t_error_median.item():.2f}",
             f"---"
         )
         table.add_row(
             "Mode",
             f"[bold green]{t_error_mode.item():.2f}[/bold green]" if t_error_mode.item() <= t_error_avg.item() and
-                                                           t_error_mode.item() <= t_error_median.item() else
+                                                                     t_error_mode.item() <= t_error_median.item() else
             f"{t_error_mode.item():.2f}",
-            f"[bold green]{r_error_mode:.2f}[/bold green]"if r_error_mode <= r_error_avg else
+            f"[bold green]{r_error_mode:.2f}[/bold green]" if r_error_mode <= r_error_avg else
             f"{r_error_mode:.2f}"
         )
         print("")
