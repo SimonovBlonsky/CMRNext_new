@@ -710,6 +710,7 @@ def main():
     parser.add_argument('--save_file', type=str, nargs='?', default=None)
     parser.add_argument('--quantile', type=float, default=1.0)
     parser.add_argument('--downsample', type=str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--viz', type=str2bool, nargs='?', const=True, default=False)
 
     args = parser.parse_args()
     _config = vars(args)
