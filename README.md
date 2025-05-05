@@ -206,6 +206,7 @@ The `--viz` is useful to visualize and debug, but will slow down the inference, 
 </details>
 If you see no points projection in the top image, or if the points are flipped 90 degrees, it means that the initial extrinsic calibration provided is incorrect.
 
+The `--downsample` argument should give better results for most use cases, but if your camera images looks similar to the ones in the KITTI dataset, then you might try removing the argument and check if the results are better.
 
 ## Monocular Localization in LiDAR Maps
 This section contains the steps to perform inference for monocular localization in LiDAR maps. First, we need to create the LiDAR maps for each dataset.
