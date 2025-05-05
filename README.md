@@ -34,7 +34,7 @@ If you use CMRNext, please cite:
 ```
 
 ## News
-- [x] 2025/05/02 - We released the [inference code for calibration](#Inference-on-your-own-dataset) on custom dataset, and we added some visualization.
+- [x] 2025/05/02 - We released the [inference code for calibration on custom datasets](#Inference-on-your-own-dataset), and we added some visualization.
 - [x] 2025/04/11 - We released the [inference code for monocular localization on Argoverse](#Monocular-Localization-in-LiDAR-Maps)
 - [x] 2025/03/26 — We released the [inference code for extrinsic calibration](#Camera-LiDAR-Extrinsic-Calibration).
 - [x] 2025/04/07 - We released the [inference code for monocular localization on KITTI](#Monocular-Localization-in-LiDAR-Maps)
@@ -169,7 +169,7 @@ Example results:
 </details>
 
 ### Inference on your own dataset
-To run extrinsic calibration on your own dataset, record multiple synchronized image-point cloud pairs. The easiest way to do this, is to record one image-point cloud pair with the robot stationary, and repeat it at different locations.
+To run extrinsic calibration on your own dataset, record multiple (the more, the better) synchronized image-point cloud pairs. The easiest way to do this, is to record one image-point cloud pair with the robot stationary, and repeat it at different locations.
 > [!CAUTION]
 > If you decide to record data while the robot is moving, then you have to make sure that point clouds are undistorted (motion compensated), and time-synchronized to match the timestamp of the camera. If you don't do that, there is no way to recover an accurate extrinsic calibration.
 
