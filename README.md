@@ -171,7 +171,7 @@ Example results:
 ### Inference on your own dataset
 To run extrinsic calibration on your own dataset, record multiple synchronized image-point cloud pairs. The easiest way to do this, is to record one image-point cloud pair with the robot stationary, and repeat it at different locations.
 > [!CAUTION]
-> If you decide to record data while the robot is moving, then you have to make sure that point clouds are undistorted (motion compensated), and time-synchronized to match the timestamp of the camera. If you don't to that, there is no way to recover an accurate extrinsic calibration.
+> If you decide to record data while the robot is moving, then you have to make sure that point clouds are undistorted (motion compensated), and time-synchronized to match the timestamp of the camera. If you don't do that, there is no way to recover an accurate extrinsic calibration.
 
 Then, place your **UNDISTORTED** images in a folder named `camera`, and your point clouds in a folder named `lidar`.
 The filenames of matching camera and lidar pairs must be the same (except fot the extension).
@@ -198,10 +198,12 @@ After your data is ready, run CMRNext:
 python evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder ./sample_custom_dataset --dataset custom --num_worker 2 --quantile 1.0 --max_r 0 --max_t 0 --downsample --viz
 ```
 The `--viz` is useful to visualize and debug, but will slow down the inference, you can remove it after checking that the initial projection and the predicted projection are as expected.
-The visualization looks like this:
+<details>
+<summary>The visualization looks like this:</summary>
 <p align="center">
   <img src="assets/custom_viz.png" alt="Visualization" width="1200" />
 </p>
+</details>
 If you see no points projection in the top image, or if the points are flipped 90 degrees, it means that the initial extrinsic calibration provided is incorrect.
 
 
