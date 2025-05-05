@@ -150,6 +150,8 @@ def evaluate_calibration(_config, seed):
     f, axarr = plt.subplots(2, 1)
     axarr[0].set_title('Initial Calibration')
     axarr[1].set_title('CMRNext Estimated Calibration')
+    plt.show(block=False)
+    plt.pause(1)
 
     _config['network'] = checkpoint['config']['network']
     _config['use_reflectance'] = checkpoint['config']['use_reflectance']
@@ -366,6 +368,7 @@ def evaluate_calibration(_config, seed):
             if _config['viz']:
                 viz_initial = overlay_imgs(rgb, depth_img_no_occlusion[-1].unsqueeze(0).unsqueeze(0), max_depth=0.5,
                                            close_thr=1000)
+                # plt.imshow(viz_initial)
 
             points_3D = points_3D[new_indexes].clone()
             rgb, depth_img_no_occlusion, flow_img, flow_mask = downsample_and_pad(_config, rgb, depth_img_no_occlusion,
@@ -588,7 +591,7 @@ def evaluate_calibration(_config, seed):
                 axarr[0].imshow(viz_initial)
                 axarr[1].imshow(viz_final)
                 plt.draw()
-                plt.pause(0.01)
+                plt.pause(5)
 
             try:
                 if _config['dataset'] != 'custom':
@@ -606,7 +609,10 @@ def evaluate_calibration(_config, seed):
         errors_t[iteration] = torch.tensor(errors_t[iteration])
         errors_r[iteration] = torch.tensor(errors_r[iteration])
 
-    if _config['dataset'] == 'custom':
+    if _config['dataset'] == 'custom' and len(final_calib_RTs[len(_config['weights'])]) == 1:
+        print("Predicted extrinsic calibration:")
+        print(final_calib_RTs[len(_config['weights'])][0])
+    elif _config['dataset'] == 'custom':
         iteration = len(_config['weights'])
         final_quats = np.stack([quaternion_from_matrix(t) for t in final_calib_RTs[iteration]])
         avg_quaternion = torch.from_numpy(average_quaternions(final_quats))

@@ -33,11 +33,15 @@ If you use CMRNext, please cite:
 }
 ```
 
-## Release Status
-- [x] 2025/03/25 — We released the ROS code for camera-LiDAR extrinsic calibration on KITTI using [MDPCalib](https://github.com/robot-learning-freiburg/MDPCalib/), which combines CMRNext with graph optimization.
+## News
+- [x] 2025/05/02 - We released the [inference code for calibration](#Inference-on-your-own-dataset) on custom dataset, and we added some visualization.
+- [x] 2025/04/11 - We released the [inference code for monocular localization on Argoverse](#Monocular-Localization-in-LiDAR-Maps)
 - [x] 2025/03/26 — We released the [inference code for extrinsic calibration](#Camera-LiDAR-Extrinsic-Calibration).
 - [x] 2025/04/07 - We released the [inference code for monocular localization on KITTI](#Monocular-Localization-in-LiDAR-Maps)
-- [x] 2025/04/11 - We released the [inference code for monocular localization on Argoverse](#Monocular-Localization-in-LiDAR-Maps)
+- [x] 2025/03/25 — We released the ROS code for camera-LiDAR extrinsic calibration on KITTI using [MDPCalib](https://github.com/robot-learning-freiburg/MDPCalib/), which combines CMRNext with graph optimization.
+
+
+## TODO
 - [ ] Localization inference code on Pandaset
 - [ ] Training code
 
@@ -163,6 +167,43 @@ Example results:
   <img src="assets/results_pandaset.png" alt="Pandaset" width="1200" />
 </p>
 </details>
+
+### Inference on your own dataset
+To run extrinsic calibration on your own dataset, record multiple synchronized image-point cloud pairs. The easiest way to do this, is to record one image-point cloud pair with the robot stationary, and repeat it at different locations.
+> [!CAUTION]
+> If you decide to record data while the robot is moving, then you have to make sure that point clouds are undistorted (motion compensated), and time-synchronized to match the timestamp of the camera. If you don't to that, there is no way to recover an accurate extrinsic calibration.
+
+Then, place your **UNDISTORTED** images in a folder named `camera`, and your point clouds in a folder named `lidar`.
+The filenames of matching camera and lidar pairs must be the same (except fot the extension).
+Additionally, create a file named `calibration.yaml`, where you have to provide intrinsic parameters of your camera, and an initial extrinsic transformation.
+The goal of this transformation is mostly to change the axis of the LiDAR such that it face the same direction of the camera.
+Without an appropriate initial calibration, the method will not work.
+
+We provide a sample dataset recorded with our in-house robot in `sample_custom_dataset`. The final folder structure should look like:
+```bash
+\data\custom_dataset\
+├── camera
+│   ├── 000000.png
+│   ├── 000001.png
+│   ├── ...
+├── lidar
+│   ├── 000000.pcd
+│   ├── 000001.pcd
+│   ├── ...
+└── calibration.yaml
+```
+Different point clouds format are supported.
+After your data is ready, run CMRNext:
+```python
+python evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder ./sample_custom_dataset --dataset custom --num_worker 2 --quantile 1.0 --max_r 0 --max_t 0 --downsample --viz
+```
+The `--viz` is useful to visualize and debug, but will slow down the inference, you can remove it after checking that the initial projection and the predicted projection are as expected.
+The visualization looks like this:
+<p align="center">
+  <img src="assets/custom_viz.png" alt="Visualization" width="1200" />
+</p>
+If you see no points projection in the top image, or if the points are flipped 90 degrees, it means that the initial extrinsic calibration provided is incorrect.
+
 
 ## Monocular Localization in LiDAR Maps
 This section contains the steps to perform inference for monocular localization in LiDAR maps. First, we need to create the LiDAR maps for each dataset.

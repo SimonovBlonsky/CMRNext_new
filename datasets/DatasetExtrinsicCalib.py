@@ -98,7 +98,7 @@ def _get_point_cloud_reader(file_extension, first_scan_file):
                 def __call__(self, file):
                     pcd = o3d.t.io.read_point_cloud(file)
                     points = pcd.point.positions.numpy()
-                    return points, self.get_timestamps(pcd)
+                    return points
 
             return ReadOpen3d(stamp_field)
         except:
@@ -111,7 +111,7 @@ def _get_point_cloud_reader(file_extension, first_scan_file):
 
             class ReadTriMesh:
                 def __call__(self, file):
-                    return np.asarray(trimesh.load(file).vertices), np.array([])
+                    return np.asarray(trimesh.load(file).vertices)
 
             return ReadTriMesh()
         except:
@@ -124,9 +124,7 @@ def _get_point_cloud_reader(file_extension, first_scan_file):
 
             class ReadPynt:
                 def __call__(self, file):
-                    return PyntCloud.from_file(file).points[["x", "y", "z"]].to_numpy(), np.array(
-                        []
-                    )
+                    return PyntCloud.from_file(file).points[["x", "y", "z"]].to_numpy()
 
             return ReadPynt()
         except:
