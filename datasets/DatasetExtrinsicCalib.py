@@ -71,36 +71,18 @@ def _get_point_cloud_reader(file_extension, first_scan_file):
         try:
             import open3d as o3d
 
-            try_pcd = o3d.t.io.read_point_cloud(first_scan_file)
+            try_pcd = o3d.io.read_point_cloud(first_scan_file)
             if try_pcd.is_empty():
                 # open3d binding does not raise an exception if file is unreadable or extension is not supported
                 raise Exception("Generic Dataloader| Open3d PointCloud file is empty")
 
-            stamps_keys = ["t", "timestamp", "timestamps", "time", "stamps"]
-            stamp_field = None
-            for key in stamps_keys:
-                try:
-                    try_pcd.point[key]
-                    stamp_field = key
-                    print("Generic Dataloader| found timestamps")
-                    break
-                except:
-                    continue
-
             class ReadOpen3d:
-                def __init__(self, time_field):
-                    self.time_field = time_field
-                    if self.time_field is None:
-                        self.get_timestamps = lambda _: np.array([])
-                    else:
-                        self.get_timestamps = lambda pcd: pcd.point[self.time_field].numpy().ravel()
-
                 def __call__(self, file):
-                    pcd = o3d.t.io.read_point_cloud(file)
-                    points = pcd.point.positions.numpy()
+                    pcd = o3d.io.read_point_cloud(file)
+                    points = np.asarray(pcd.points)
                     return points
 
-            return ReadOpen3d(stamp_field)
+            return ReadOpen3d()
         except:
             pass
 

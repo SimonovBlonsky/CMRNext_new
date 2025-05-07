@@ -195,7 +195,7 @@ We provide a sample dataset recorded with our in-house robot in `sample_custom_d
 Different point clouds format are supported.
 After your data is ready, run CMRNext:
 ```python
-python evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder ./sample_custom_dataset --dataset custom --num_worker 2 --quantile 1.0 --max_r 0 --max_t 0 --downsample --viz
+python3 evaluate_flow_calibration.py --weights /data/cmrnext-calib-LEnc-iter1.tar /data/cmrnext-calib-LEnc-iter5.tar /data/cmrnext-calib-LEnc-iter6.tar --data_folder ./sample_custom_dataset --dataset custom --num_worker 2 --quantile 1.0 --max_r 0 --max_t 0 --downsample --viz
 ```
 The `--viz` is useful to visualize and debug, but will slow down the inference, you can remove it after checking that the initial projection and the predicted projection are as expected.
 <details>
@@ -305,6 +305,7 @@ In our work and experiments, we have used components from other works. We thank 
 - RAFT: https://github.com/princeton-vl/RAFT
 - CMRNet: https://github.com/cattaneod/CMRNet
 - https://github.com/dilaragokay/central-tendency-rotations/
+- KISS-ICP: https://github.com/PRBonn/kiss-icp
 
 ## Contacts
 * [Daniele Cattaneo](https://rl.uni-freiburg.de/people/cattaneo)
