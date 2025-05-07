@@ -59,7 +59,6 @@ color = 'intensity'  # 'intensity', None
 
 i = 0
 for seq_num in tqdm(datasets.sequences(with_semseg=True)):
-    print(seq_num)
     i += 1
     for f in os.listdir(os.path.join(args.base_folder, seq_num, 'lidar')):
         if f.endswith('.pkl'):
@@ -95,8 +94,6 @@ for seq_num in tqdm(datasets.sequences(with_semseg=True)):
             pose_save_path = os.path.join(poses_torch_folder,
                                           os.path.splitext(os.path.basename(frame))[0] + '.npy')
             np.save(pose_save_path, pose.inverse().cpu().numpy())
-
-    continue
 
     for frame in range(len(seq.lidar.data)):
         pc_np = seq.lidar[frame].values
