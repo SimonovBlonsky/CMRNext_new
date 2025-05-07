@@ -126,17 +126,23 @@ def evaluate_localization(_config, seed):
             test_directories.append(os.path.join(base_dir, subdir))
     elif _config['dataset'] == 'pandaset':
         img_shape = (576, 1920//2)  # Multiple of 64 inference at scale 0.5
+        for subdir in ['011', '122', '124', '030', '109', '043', '084', '115', '090']:  # Test sequences
+            test_directories.append(os.path.join(base_dir, subdir))
     else:
         raise RuntimeError("Dataset unknown")
 
     if _config['dataset'] == 'pandaset':
-        raise NotImplementedError("Pandaset dataset will be released soon")
+        dataset_val = DatasetGeneralSingleMapPerSequence(test_directories, train=False, max_r=_config['max_r'],
+                                                         max_t=_config['max_t'],
+                                                         use_reflectance=_config['use_reflectance'],
+                                                         normalize_images=_config['normalize_images'],
+                                                         image_folder='camera/front_camera', dataset='pandaset')
     elif _config['dataset'] == 'argoverse':
         dataset_val = DatasetGeneralSingleMapPerSequence(test_directories, train=False, max_r=_config['max_r'],
                                                          max_t=_config['max_t'],
                                                          use_reflectance=_config['use_reflectance'],
                                                          normalize_images=_config['normalize_images'],
-                                                         image_folder='ring_front_center')
+                                                         image_folder='ring_front_center', dataset='argoverse')
     else:
         dataset_val = DatasetGeneral(test_directories, train=False, max_r=_config['max_r'], max_t=_config['max_t'],
                                      use_reflectance=_config['use_reflectance'], normalize_images=_config['normalize_images'],
@@ -357,12 +363,6 @@ def evaluate_localization(_config, seed):
                 new_uv = uv.float() + up_flow[uv[:, 1], uv[:, 0]]
 
             valid_indexes = flow_mask[uv[:, 1], uv[:, 0]] == 1
-            if _config['uncertainty']:
-                sum_uncertainty = predicted_uncertainty[-1][0,0] + predicted_uncertainty[-1][0,1]
-                mean_uncertainty = sum_uncertainty * flow_mask
-                # mean_uncertainty = mean_uncertainty[flow_mask!=0].mean()
-                mean_uncertainty = np.quantile(mean_uncertainty[flow_mask!=0].detach().cpu().numpy(), _config['quantile'])
-                valid_indexes = valid_indexes & (sum_uncertainty[uv[:, 1], uv[:, 0]] < mean_uncertainty)
 
             # Check only pixels that are within the image border
             valid_indexes = valid_indexes & (new_uv[:,0] < flow_mask.shape[1])
@@ -520,7 +520,7 @@ def evaluate_localization(_config, seed):
     print(f'PnP+RANSAC Time: ', torch.tensor(ransac_time).mean())
     console = Console()
     table = Table(show_header=True, header_style="bold magenta", box=box.MINIMAL_HEAVY_HEAD, title_style="bold red")
-    table.title = f"CMRNext Results on {_config['dataset']}, camera {_config['cam']}"
+    table.title = f"CMRNext Results on {_config['dataset']}"
     table.add_column("Iteration")
     table.add_column("Median Translation error (cm)", justify="center", max_width=20)
     table.add_column("Median Rotation error (˚)", justify="center", max_width=20)
@@ -547,7 +547,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='kitti')
     parser.add_argument('--data_folder', type=str, default='/data/KITTI/sequences/')
-    parser.add_argument('--cam', type=str, nargs='?', default=None)
     parser.add_argument('--max_t', type=float, default=2)
     parser.add_argument('--max_r', type=float, default=10.)
     parser.add_argument('--num_worker', type=int, default=2)

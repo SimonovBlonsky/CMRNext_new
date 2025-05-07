@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 from math import radians
 
@@ -185,7 +186,8 @@ class DatasetGeneral(Dataset):
 
 class DatasetGeneralSingleMapPerSequence(Dataset):
     def __init__(self, dataset_dirs, transform=None, augmentation=False, use_reflectance=False, max_t=2., max_r=10.,
-                 train=True, normalize_images=True, change_frame=False, prob_no_aug=0.0, image_folder='image'):
+                 train=True, normalize_images=True, change_frame=False, prob_no_aug=0.0, image_folder='image',
+                 dataset='argoverse'):
         super(DatasetGeneralSingleMapPerSequence, self).__init__()
         self.use_reflectance = use_reflectance
         self.max_r = max_r
@@ -197,6 +199,7 @@ class DatasetGeneralSingleMapPerSequence(Dataset):
         self.prob_no_aug = prob_no_aug
         self.change_frame = change_frame
         self.image_folder = image_folder
+        self.dataset = dataset
 
         self.all_files = []
         self.map_paths = []
@@ -240,11 +243,18 @@ class DatasetGeneralSingleMapPerSequence(Dataset):
         map_path = self.map_paths[idx]
 
         splitted_path = img_path.split('/')
-        calib = read_json_file(
-            img_path.replace(f'{splitted_path[-2]}/{splitted_path[-1]}', 'vehicle_calibration_info.json'))
-        calib = get_calibration_config(calib, self.image_folder)
-        calib = torch.tensor([calib.intrinsic[0, 0], calib.intrinsic[1, 1],
-                               calib.intrinsic[0, 2], calib.intrinsic[1, 2]]).float()
+        if self.dataset == 'argoverse':
+            calib = read_json_file(
+                img_path.replace(f'{splitted_path[-2]}/{splitted_path[-1]}', 'vehicle_calibration_info.json'))
+            calib = get_calibration_config(calib, self.image_folder)
+            calib = torch.tensor([calib.intrinsic[0, 0], calib.intrinsic[1, 1],
+                                   calib.intrinsic[0, 2], calib.intrinsic[1, 2]]).float()
+        elif self.dataset == 'pandaset':
+            calib_file = os.path.join(os.path.dirname(img_path), 'intrinsics.json')
+            calib = json.load(open(calib_file, 'r'))
+            calib = torch.tensor([calib['fx'], calib['fy'], calib['cx'], calib['cy']]).float()
+        else:
+            raise NotImplementedError("Dataset unknown")
 
         pose_folder = os.path.join(os.path.dirname(img_path), 'poses_torch')
         pose_path = os.path.join(pose_folder,

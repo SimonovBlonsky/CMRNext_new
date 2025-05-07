@@ -1,4 +1,6 @@
 import argparse
+import json
+
 import h5py
 import gzip
 import os
@@ -11,6 +13,8 @@ import open3d as o3d
 
 from pandaset.geometry import _heading_position_to_mat
 from tqdm import tqdm
+
+from utils import to_rotation_matrix
 
 
 def projection_torch(lidar_points, camera_data, camera_pose, camera_intrinsics, filter_outliers=True):
@@ -55,6 +59,7 @@ color = 'intensity'  # 'intensity', None
 
 i = 0
 for seq_num in tqdm(datasets.sequences(with_semseg=True)):
+    print(seq_num)
     i += 1
     for f in os.listdir(os.path.join(args.base_folder, seq_num, 'lidar')):
         if f.endswith('.pkl'):
@@ -73,6 +78,26 @@ for seq_num in tqdm(datasets.sequences(with_semseg=True)):
     seq.load()
     all_pts = []
     all_colors = []
+
+    for camera_folder in os.listdir(os.path.join(args.base_folder, seq_num, 'camera')):
+        poses_torch_folder = os.path.join(args.base_folder, seq_num, 'camera', camera_folder, 'poses_torch')
+        if not os.path.exists(poses_torch_folder):
+            os.mkdir(poses_torch_folder)
+        poses_file = os.path.join(args.base_folder, seq_num, 'camera', camera_folder, 'poses.json')
+        poses = json.load(open(poses_file, 'r'))
+        camera_frames = os.listdir(os.path.join(args.base_folder, seq_num, 'camera', camera_folder))
+        camera_frames = sorted([f for f in camera_frames if f.endswith('.jpg')])
+        for frame in camera_frames:
+            pose = poses[int(os.path.splitext(os.path.basename(frame))[0])]
+            pose_t = torch.tensor([pose['position']['x'], pose['position']['y'], pose['position']['z']])
+            pose_r = torch.tensor([pose['heading']['w'], pose['heading']['x'], pose['heading']['y'], pose['heading']['z']])
+            pose = to_rotation_matrix(pose_r, pose_t)
+            pose_save_path = os.path.join(poses_torch_folder,
+                                          os.path.splitext(os.path.basename(frame))[0] + '.npy')
+            np.save(pose_save_path, pose.inverse().cpu().numpy())
+
+    continue
+
     for frame in range(len(seq.lidar.data)):
         pc_np = seq.lidar[frame].values
 

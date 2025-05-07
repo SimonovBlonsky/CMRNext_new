@@ -31,4 +31,5 @@ numba
 polars
 shapely
 scikit_learn
+json
 gzip
