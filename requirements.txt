@@ -31,4 +31,3 @@ numba
 polars
 shapely
 scikit_learn
-gzip
