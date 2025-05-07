@@ -34,6 +34,7 @@ If you use CMRNext, please cite:
 ```
 
 ## News
+- [x] 2025/05/07 - Localization inference code on Pandaset
 - [x] 2025/05/02 - We released the [inference code for calibration on custom datasets](#Inference-on-your-own-dataset), and we added some visualization.
 - [x] 2025/04/11 - We released the [inference code for monocular localization on Argoverse](#Monocular-Localization-in-LiDAR-Maps)
 - [x] 2025/03/26 — We released the [inference code for extrinsic calibration](#Camera-LiDAR-Extrinsic-Calibration).
@@ -42,7 +43,6 @@ If you use CMRNext, please cite:
 
 
 ## TODO
-- [ ] Localization inference code on Pandaset
 - [ ] Training code
 
 
@@ -235,7 +235,11 @@ python3 -m preprocess.argoverse --base_folder /data/argoverse/argoverse-tracking
 ```
 
 #### Pandaset
-TODO
+To generate the LiDAR maps of the Pandaset dataset, run the following command:
+
+```bash
+python3 -m preprocess.pandaset --base_folder /data/pandaset
+```
 
 ### Inference
 
@@ -253,6 +257,14 @@ python3 evaluate_flow_localization.py --weights /data/cmrnext-iter1.tar /data/cm
 
 ```bash
 python3 evaluate_flow_localization.py --weights /data/cmrnext-iter1.tar /data/cmrnext-iter2.tar /data/cmrnext-iter3.tar --data_folder /data/argoverse/argoverse_tracking/ --dataset argoverse
+```
+</details>
+
+<details>
+<summary>Pandaset:</summary>
+
+```bash
+python3 evaluate_flow_localization.py --weights /data/cmrnext-iter1.tar /data/cmrnext-iter2.tar /data/cmrnext-iter3.tar --data_folder /data/pandaset/ --dataset pandaset
 ```
 </details>
 
