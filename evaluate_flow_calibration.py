@@ -147,11 +147,12 @@ def evaluate_calibration(_config, seed):
 
     checkpoint = torch.load(_config['weights'][0], map_location='cpu')
 
-    f, axarr = plt.subplots(2, 1)
-    axarr[0].set_title('Initial Calibration')
-    axarr[1].set_title('CMRNext Estimated Calibration')
-    plt.show(block=False)
-    plt.pause(1)
+    if _config['viz']:
+        f, axarr = plt.subplots(2, 1)
+        axarr[0].set_title('Initial Calibration')
+        axarr[1].set_title('CMRNext Estimated Calibration')
+        plt.show(block=False)
+        plt.pause(1)
 
     _config['network'] = checkpoint['config']['network']
     _config['use_reflectance'] = checkpoint['config']['use_reflectance']
