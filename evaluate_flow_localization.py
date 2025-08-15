@@ -77,7 +77,6 @@ def evaluate_localization(_config, seed):
     _config['upsample_method'] = checkpoint['config']['upsample_method']
     _config['occlusion_kernel'] = checkpoint['config']['occlusion_kernel']
     _config['occlusion_threshold'] = checkpoint['config']['occlusion_threshold']
-    _config['al_contrario'] = checkpoint['config']['al_contrario']
     _config['amp'] = checkpoint['config']['amp']
     _config['scaled_gt'] = checkpoint['config']['scaled_gt']
     _config['uncertainty'] = False
@@ -251,7 +250,7 @@ def evaluate_localization(_config, seed):
 
             flow, points_3D, new_indexes = get_flow_zforward(uv.float(), depth[indexes], RT1_inv, cam_model,
                                             [real_shape[0] // 64 * 64, real_shape[1], 3],
-                                            scale_flow=False, al_contrario=_config['al_contrario'],
+                                            scale_flow=False, reverse=False,
                                             get_valid_indexes=True)
 
             uv = uv[new_indexes].clone()
@@ -357,10 +356,7 @@ def evaluate_localization(_config, seed):
 
             up_flow = up_flow[0].permute(1, 2, 0)
 
-            if _config['al_contrario']:
-                new_uv = uv.float() - up_flow[uv[:, 1], uv[:, 0]]
-            else:
-                new_uv = uv.float() + up_flow[uv[:, 1], uv[:, 0]]
+            new_uv = uv.float() + up_flow[uv[:, 1], uv[:, 0]]
 
             valid_indexes = flow_mask[uv[:, 1], uv[:, 0]] == 1
 
@@ -445,7 +441,7 @@ def evaluate_localization(_config, seed):
 
             flow, points_3D, new_indexes = get_flow_zforward(uv.float(), depth[indexes], RTs[-1].inverse(), cam_model,
                                                     [real_shape[0], real_shape[1], 3],
-                                                    scale_flow=False, al_contrario=_config['al_contrario'],
+                                                    scale_flow=False, reverse=False,
                                                     get_valid_indexes=True)
 
             uv = uv[new_indexes].clone()

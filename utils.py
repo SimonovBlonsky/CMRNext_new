@@ -398,7 +398,7 @@ def overlay_imgs(rgb, lidar, idx=0, pooling=3, max_depth=160., close_thr=25.):
     return blended_img
 
 
-def get_flow(uv, depth, RT, cam_model, image_shape, scale_flow=True, get_valid_indexes=False, al_contrario=True):
+def get_flow(uv, depth, RT, cam_model, image_shape, scale_flow=True, get_valid_indexes=False, reverse=True):
     points_3D = torch.zeros((uv.shape[0], 4),
                             device=uv.device, dtype=torch.float)
 
@@ -414,7 +414,7 @@ def get_flow(uv, depth, RT, cam_model, image_shape, scale_flow=True, get_valid_i
     uv_rgb[:, 0] = cam_model.focal_length[0] * pc_rotated[:, 1] / pc_rotated[:, 0] + cam_model.principal_point[0]
     uv_rgb[:, 1] = cam_model.focal_length[1] * pc_rotated[:, 2] / pc_rotated[:, 0] + cam_model.principal_point[1]
 
-    if al_contrario:
+    if reverse:
         flow = uv - uv_rgb
     else:
         flow = uv_rgb - uv
@@ -443,7 +443,7 @@ def get_flow(uv, depth, RT, cam_model, image_shape, scale_flow=True, get_valid_i
         return flow.clone(), points_3D.clone()
 
 
-def get_flow_zforward(uv, depth, RT, cam_model, image_shape, scale_flow=True, get_valid_indexes=False, al_contrario=True):
+def get_flow_zforward(uv, depth, RT, cam_model, image_shape, scale_flow=True, get_valid_indexes=False, reverse=False):
     points_3D = torch.zeros((uv.shape[0], 4),
                             device=uv.device, dtype=torch.float)
 
@@ -459,7 +459,7 @@ def get_flow_zforward(uv, depth, RT, cam_model, image_shape, scale_flow=True, ge
     uv_rgb[:, 0] = cam_model.focal_length[0] * pc_rotated[:, 0] / pc_rotated[:, 2] + cam_model.principal_point[0]
     uv_rgb[:, 1] = cam_model.focal_length[1] * pc_rotated[:, 1] / pc_rotated[:, 2] + cam_model.principal_point[1]
 
-    if al_contrario:
+    if reverse:
         flow = uv - uv_rgb
     else:
         flow = uv_rgb - uv
@@ -746,3 +746,44 @@ def str2bool(v):
 
 def get_flow_rgb2lidar(*args):
     pass
+
+
+def get_ECE(predicted_flow, predicted_uncertainty, target_flow, mask, loss_type="NLL"):
+    gamma1 = predicted_flow[:, 0, :, :]
+    y1 = target_flow[:, 0, :, :]
+    if loss_type == "NLL":
+        sigma1 = predicted_uncertainty[:, 0, :, :]
+    else:
+        v1 = predicted_uncertainty[:, 0, :, :]
+        alpha1 = predicted_uncertainty[:, 1, :, :]
+        beta1 = predicted_uncertainty[:, 2, :, :]
+        sigma1 = (beta1 / (v1 * (alpha1))).sqrt()
+    expected_p = np.arange(41) / 40.
+    observed_p1 = []
+    for p in expected_p:
+        ppf = scipy.stats.norm.ppf(p, loc=gamma1[mask[:, 0] != 0].detach().cpu().numpy(),
+                                   scale=sigma1[mask[:, 0] != 0].detach().cpu().numpy())
+        obs_p = y1[mask[:, 0] != 0].detach().cpu().numpy()
+        obs_p = obs_p < ppf
+        observed_p1.append(obs_p.mean())
+    ece_u = np.abs(expected_p - observed_p1).mean()
+
+    gamma2 = predicted_flow[:, 1, :, :]
+    y2 = target_flow[:, 1, :, :]
+    if loss_type == "NLL":
+        sigma2 = predicted_uncertainty[:, 1, :, :]
+    else:
+        v2 = predicted_uncertainty[:, 3, :, :]
+        alpha2 = predicted_uncertainty[:, 4, :, :]
+        beta2 = predicted_uncertainty[:, 5, :, :]
+        sigma2 = (beta2 / (v2 * (alpha2))).sqrt()
+    observed_p2 = []
+    for p in expected_p:
+        ppf = scipy.stats.norm.ppf(p, loc=gamma2[mask[:, 1] != 0].detach().cpu().numpy(),
+                                   scale=sigma2[mask[:, 1] != 0].detach().cpu().numpy())
+        obs_p = y2[mask[:, 1] != 0].detach().cpu().numpy()
+        obs_p = obs_p < ppf
+        observed_p2.append(obs_p.mean())
+    ece_v = np.abs(expected_p - observed_p2).mean()
+
+    return torch.tensor(ece_u, device=predicted_flow.device), torch.tensor(ece_v, device=predicted_flow.device)
