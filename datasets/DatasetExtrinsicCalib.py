@@ -210,11 +210,11 @@ class DatasetGeneralExtrinsicCalib(Dataset):
                 for log_id in sorted(os.listdir(directory)):
                     self.sdbs[log_id] = SynchronizationDB(directory, collect_single_log_id=log_id)
 
-                point_cloud_folder = os.path.join(directory, log_id, self.maps_folder)
+                    point_cloud_folder = os.path.join(directory, log_id, self.maps_folder)
 
-                sorted_filenames = sorted(os.listdir(point_cloud_folder))
-                for filename in sorted_filenames:
-                    self.all_files.append(os.path.join(point_cloud_folder, filename))
+                    sorted_filenames = sorted(os.listdir(point_cloud_folder))
+                    for filename in sorted_filenames:
+                        self.all_files.append(os.path.join(point_cloud_folder, filename))
 
             if dataset == 'custom':
                 with open(os.path.join(directory, 'calibration.yaml')) as f:
@@ -306,7 +306,10 @@ class DatasetGeneralExtrinsicCalib(Dataset):
         h_mirror = False
         if np.random.rand() > 0.5 and self.train:
             h_mirror = True
-            pc_in[1, :] *= -1
+            if self.change_frame:
+                pc_in[1, :] *= -1
+            else:
+                pc_in[0, :] *= -1
             calib[2] = img.size[0] - calib[2]
 
         img_rotation = 0.
@@ -321,7 +324,10 @@ class DatasetGeneralExtrinsicCalib(Dataset):
 
         # Rotate PointCloud for img_rotation
         if self.train:
-            R = mathutils.Euler((radians(img_rotation), 0, 0), 'XYZ')
+            if self.change_frame:
+                R = mathutils.Euler((radians(img_rotation), 0, 0), 'XYZ')
+            else:
+                R = mathutils.Euler((0, 0, radians(img_rotation)), 'XYZ')
             T = mathutils.Vector((0., 0., 0.))
             pc_in = rotate_forward(pc_in, R, T)
 
@@ -444,7 +450,10 @@ class DatasetPandasetExtrinsicCalib(Dataset):
         h_mirror = False
         if np.random.rand() > 0.5 and self.train:
             h_mirror = True
-            pc_in[1, :] *= -1
+            if self.change_frame:
+                pc_in[1, :] *= -1
+            else:
+                pc_in[0, :] *= -1
             calib[2] = img.size[0] - calib[2]
 
         img_rotation = 0.
@@ -458,7 +467,10 @@ class DatasetPandasetExtrinsicCalib(Dataset):
 
         # Rotate PointCloud for img_rotation
         if self.train:
-            R = mathutils.Euler((radians(img_rotation), 0, 0), 'XYZ')
+            if self.change_frame:
+                R = mathutils.Euler((radians(img_rotation), 0, 0), 'XYZ')
+            else:
+                R = mathutils.Euler((0, 0, radians(img_rotation)), 'XYZ')
             T = mathutils.Vector((0., 0., 0.))
             pc_in = rotate_forward(pc_in, R, T)
 

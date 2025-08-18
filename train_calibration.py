@@ -241,7 +241,7 @@ def main(gpu, _config, common_seed, world_size):
 
     # torch.multiprocessing.set_sharing_strategy('file_system')
 
-    occlusion_threshold = _config['occlusion_threshold']
+    # occlusion_threshold = _config['occlusion_threshold']
     img_shape = _config['img_shape']
 
     _config["savemodel"] = os.path.join(_config["savemodel"], 'argoverse')
@@ -872,12 +872,19 @@ def main(gpu, _config, common_seed, world_size):
                     depth_img_no_occlusion = torch.cat((depth_img_no_occlusion, refl_img.unsqueeze(0)))
 
                 uv_lidar = uv_lidar[indexes]
-                if _config['flow_direction'] == 'lidar2rgb':
-                    flow, _, new_indexes = get_flow(uv_lidar.float(), depth[indexes], RT, cam_model,
-                                                    [real_shape[0], real_shape[1], 3],
-                                                    scale_flow=False, reverse=False,
-                                                    get_valid_indexes=True)
-                    uv_flow = uv_lidar
+                
+                flow, _, new_indexes = get_flow_zforward(uv_lidar.float(), depth[indexes], RT, cam_model,
+                                                        [real_shape[0], real_shape[1], 3],
+                                                        scale_flow=False, reverse=False,
+                                                        get_valid_indexes=True)
+                uv_flow = uv_lidar
+                
+                # if _config['flow_direction'] == 'lidar2rgb':
+                #     flow, _, new_indexes = get_flow(uv_lidar.float(), depth[indexes], RT, cam_model,
+                #                                     [real_shape[0], real_shape[1], 3],
+                #                                     scale_flow=False, reverse=False,
+                #                                     get_valid_indexes=True)
+                #     uv_flow = uv_lidar
 
                 uv_flow = uv_flow[new_indexes].clone()
                 flow = flow[new_indexes].clone()
@@ -1128,8 +1135,8 @@ def real_main():
     parser.add_argument('--data_folder_kitti', type=str, default='/home/cattaneod/Datasets/KITTI/sequences/')
     parser.add_argument('--data_folder_panda', type=str, default='/media/RAIDONE/DATASETS/pandaset')
     parser.add_argument('--use_reflectance', action='store_true', default=False)
-    parser.add_argument('--occlusion_kernel', type=int, default=18)
-    parser.add_argument('--occlusion_threshold', type=float, default=3.9999)
+    # parser.add_argument('--occlusion_kernel', type=int, default=18)
+    # parser.add_argument('--occlusion_threshold', type=float, default=3.9999)
     parser.add_argument('--epochs', type=int, default=150)
     parser.add_argument('--BASE_LEARNING_RATE', type=float, default=3e-4)
     parser.add_argument('--max_t', type=float, default=1.5)
