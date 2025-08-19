@@ -315,7 +315,6 @@ class DatasetGeneralExtrinsicCalib(Dataset):
         img_rotation = 0.
         if self.train:
             img_rotation = np.random.uniform(-5, 5)
-            # img_rotation = 10
         try:
             img = self.custom_transform(img, calib, img_rotation, h_mirror)
         except OSError:

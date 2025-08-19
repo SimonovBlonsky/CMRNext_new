@@ -21,7 +21,7 @@ def NegativeLogLikelihoodLoss(predicted_flow, predicted_uncertainty, target_flow
 
 
 def RAFT_loss2(flow_preds, uncertainty_preds, flow_gt, valid, upsample=True, gamma=0.8, weight_nll=-1.0,
-               der_lambda=0.01, unc_type="DER"):
+               unc_type="DER"):
     """ Loss function defined over sequence of flow predictions """
 
     n_predictions = len(flow_preds)

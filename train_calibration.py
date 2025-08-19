@@ -1,14 +1,11 @@
 import argparse
-from argparse import Namespace
 from functools import partial
 from itertools import chain
 
-import math
 import os
 import random
 import time
 
-# import apex
 import mathutils
 import numpy as np
 import torch
@@ -31,28 +28,13 @@ from camera_model import CameraModel
 from flow_losses import RAFT_loss2
 from utils import resize_dense_vector
 from models.get_model import get_model
-from utils import merge_inputs, rotate_back, get_flow_zforward, EndPointError, downsample_flow_and_mask, \
-    init_logger, overlay_imgs, downsample_depth, get_ECE
+from utils import merge_inputs, rotate_back, get_flow_zforward, downsample_flow_and_mask, \
+    init_logger, downsample_depth, get_ECE
 from flow_vis import flow_to_color
 
 torch.backends.cudnn.benchmark = True
 # torch.backends.cudnn.enabled = False
 
-# noinspection PyUnusedLocal
-
-# weights = '/home/cattaneod/regnet/checkpoints/checkpoint_15.tar'
-# weights = '/home/cattaneod/regnet/checkpoints/asd.tar'
-# weights = '/home/cattaneod/regnet/checkpoints/checkpoint_13_0.154.tar'
-# weights = '/home/vaghi/checkpoint_50_0.637.tar'
-
-# It is necessary to rescale rotation loss before the losses sum.
-# This param is set manually (see PoseNet paper)
-# from 250 to 750 in indoor envs and from 250 to 2000 in outdoor envs
-# rescale_param = 751.0
-# rescale_param = 100.0
-
-
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 EPOCH = 1
 
@@ -60,13 +42,12 @@ EPOCH = 1
 def _init_fn(worker_id, epoch=0, seed=0):
     seed = seed + worker_id + epoch * 100
     seed = seed % (2 ** 32 - 1)
-    # print(f"Init worker {worker_id} with seed {seed}")
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
 
-def uncertainty_to_color(_tensor, mask=None, unc_type="NLL"):
+def uncertainty_to_color(_tensor, mask=None):
     """
     Args:
         _tensor: (2, H, W)
@@ -86,29 +67,131 @@ def uncertainty_to_color(_tensor, mask=None, unc_type="NLL"):
     return color
 
 
-# CCN training
+def prepare_input(_config, device, flow_img, flow_mask, idx, img_shape, mean, sample, std):
+    real_shape = [sample['rgb'][idx].shape[0], sample['rgb'][idx].shape[1], sample['rgb'][idx].shape[2]]
+    sample['point_cloud'][idx] = sample['point_cloud'][idx].to(device)
+    pc_rotated = sample['point_cloud'][idx].clone()
+    reflectance = None
+    if _config['use_reflectance']:
+        reflectance = sample['reflectance'][idx].to(device)
+    R = mathutils.Quaternion(sample['rot_error'][idx]).to_matrix()
+    R.resize_4x4()
+    T = mathutils.Matrix.Translation(sample['tr_error'][idx])
+    try:
+        RT = T @ R
+    except:
+        RT = T * R
+    pc_rotated = rotate_back(pc_rotated, RT)
+    cam_params = sample['calib'][idx].to(device)
+    cam_model = CameraModel()
+    cam_model.focal_length = cam_params[:2]
+    cam_model.principal_point = cam_params[2:]
+    uv_lidar, depth, _, refl = cam_model.project_pytorch(pc_rotated, real_shape, reflectance)
+    uv_lidar = uv_lidar.t().int().contiguous()
+    depth_img = torch.zeros(real_shape[:2], device=device, dtype=torch.float)
+    depth_img += 1000.
+    depth_img = visibility.depth_image(uv_lidar, depth, depth_img, uv_lidar.shape[0], real_shape[1],
+                                       real_shape[0])
+    temp_index = (depth_img == 1000.)
+    depth_img[temp_index] = 0.
+    depth_img_no_occlusion = depth_img
+    uv_lidar = uv_lidar.long()
+    indexes = depth_img_no_occlusion[uv_lidar[:, 1], uv_lidar[:, 0]] == depth
+    if _config['use_reflectance']:
+        refl_img = torch.zeros(real_shape[:2], device=device, dtype=torch.float)
+        refl_img[uv_lidar[indexes, 1], uv_lidar[indexes, 0]] = refl[0, indexes]
+    depth_img_no_occlusion /= _config['max_depth']
+    depth_img_no_occlusion = depth_img_no_occlusion.unsqueeze(0)
+    if _config['use_reflectance']:
+        depth_img_no_occlusion = torch.cat((depth_img_no_occlusion, refl_img.unsqueeze(0)))
+    uv_lidar = uv_lidar[indexes]
+    flow, _, new_indexes = get_flow_zforward(uv_lidar.float(), depth[indexes], RT, cam_model,
+                                             [real_shape[0], real_shape[1], 3],
+                                             scale_flow=False, reverse=False,
+                                             get_valid_indexes=True)
+    uv_flow = uv_lidar
+    uv_flow = uv_flow[new_indexes].clone()
+    flow = flow[new_indexes].clone()
+    rgb = sample['rgb'][idx].to(device)
+    if _config['normalize_images']:
+        rgb = rgb / 255.
+        rgb = (rgb - mean) / std
+    rgb = rgb.permute(2, 0, 1)
+    flow_img = torch.zeros((real_shape[0], real_shape[1], 2), device=device, dtype=torch.float)
+    flow_img[uv_flow[:, 1], uv_flow[:, 0]] = flow
+    flow_mask = torch.zeros((real_shape[0], real_shape[1]), device=device, dtype=torch.int)
+    flow_mask[uv_flow[:, 1], uv_flow[:, 0]] = 1
+    # Scale by half if the image is from the ARGO dataset
+    if real_shape[1] == 1920 and _config['subset_argoverse']:
+        flow_img, flow_mask = downsample_flow_and_mask(flow_img, flow_mask, 2, scale_flow=True)
+        rgb = nn.functional.interpolate(rgb.unsqueeze(0), scale_factor=0.5)[0]
+        depth_img_no_occlusion = downsample_depth(depth_img_no_occlusion.permute(1, 2, 0).contiguous(), 2)
+        depth_img_no_occlusion = depth_img_no_occlusion.permute(2, 0, 1)
+        real_shape[0] = real_shape[0] // 2
+        real_shape[1] = real_shape[1] // 2
+    if img_shape is not None and img_shape[0] <= real_shape[0]:
+        h, w = real_shape[:2]
+        th, tw = img_shape
+        crop_top = random.randint(0, h - th)
+        rgb = rgb[:, crop_top:crop_top + th, :]
+        depth_img_no_occlusion = depth_img_no_occlusion[:, crop_top:crop_top + th, :]
+        flow_img = flow_img[crop_top:crop_top + th, :, :]
+        flow_mask = flow_mask[crop_top:crop_top + th, :]
+    if img_shape is not None and img_shape[1] <= real_shape[1]:
+        h, w = real_shape[:2]
+        th, tw = img_shape
+        crop_left = random.randint(0, w - tw)
+        rgb = rgb[:, :, crop_left:crop_left + tw]
+        depth_img_no_occlusion = depth_img_no_occlusion[:, :, crop_left:crop_left + tw]
+        flow_img = flow_img[:, crop_left:crop_left + tw, :]
+        flow_mask = flow_mask[:, crop_left:crop_left + tw]
+    if img_shape is not None and (img_shape[0] >= real_shape[0] or img_shape[1] >= real_shape[1]):
+        # PAD ONLY ON RIGHT AND BOTTOM SIDE, IN ORDER TO BE CONSISTENT WITH FLOW
+        shape_pad = [0, 0, 0, 0]
+
+        shape_pad[3] = max(0, (img_shape[0] - real_shape[0]))  # // 2
+        shape_pad[1] = max(0, (img_shape[1] - real_shape[1]))  # // 2 + 1
+
+        rgb = F.pad(rgb, shape_pad)
+        depth_img_no_occlusion = F.pad(depth_img_no_occlusion, shape_pad)
+        flow_img = F.pad(flow_img.permute(2, 0, 1), shape_pad).permute(1, 2, 0)
+        flow_mask = F.pad(flow_mask, shape_pad)
+    if _config['fourier_levels'] >= 0:
+        depth_img_no_occlusion = depth_img_no_occlusion.squeeze()
+        mask = (depth_img_no_occlusion > 0).clone()
+        fourier_feats = []
+        for L in range(_config['fourier_levels']):
+            fourier_feat = depth_img_no_occlusion * np.pi * 2 ** L
+            fourier_feats.append(fourier_feat.sin())
+            fourier_feats.append(fourier_feat.cos())
+        depth_img_no_occlusion = torch.stack(fourier_feats + [depth_img_no_occlusion])
+        depth_img_no_occlusion = depth_img_no_occlusion * mask.unsqueeze(0)
+    return depth_img_no_occlusion, flow_img, flow_mask, rgb
+
+
+# CNN training
 def train(model, optimizer, scaler, rgb_img, lidar_img, target_flow, target_mask, _config):
     model.train()
 
     optimizer.zero_grad()
 
-    # with torch.autograd.detect_anomaly():
     with amp.autocast(enabled=_config['amp']):
         # Run model
         predicted_flow = model(rgb_img, lidar_img)
 
         predicted_flow, predicted_uncertainty = predicted_flow
 
+        # Calculate Loss
         flow_loss, metrics = RAFT_loss2(predicted_flow, predicted_uncertainty, target_flow[0], target_mask[0],
                                         upsample=False,
-                                        weight_nll=_config['weight_nll'], der_lambda=_config['der_lambda'],
-                                        unc_type=_config['der_type'])
+                                        weight_nll=_config['weight_nll'], unc_type=_config['der_type'])
 
     #  EPE
     epe = metrics['epe']
 
     total_loss = flow_loss
 
+    # Backpropagation
     scaler.scale(total_loss).backward()
     scaler.unscale_(optimizer)
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
@@ -131,10 +214,10 @@ def test(model, rgb_img, lidar_img, target_flow, target_mask, log_image, _config
 
     predicted_flow, predicted_uncertainty = predicted_flow
 
+    # Calculate Loss
     flow_loss, metrics = RAFT_loss2(predicted_flow, predicted_uncertainty, target_flow[0], target_mask[0],
                                     upsample=False,
-                                    weight_nll=_config['weight_nll'], der_lambda=_config['der_lambda'],
-                                    unc_type=_config['der_type'])
+                                    weight_nll=_config['weight_nll'], unc_type=_config['der_type'])
 
     total_loss = flow_loss
 
@@ -143,12 +226,13 @@ def test(model, rgb_img, lidar_img, target_flow, target_mask, log_image, _config
     epe = metrics['epe']
     f1 = metrics['f1']
 
-    # Expected Calibration Error
+    # Expected Calibration Error (Uncertainty Estimation)
     ece_dict, ece_u, ece_v = None, None, None
     if _config['uncertainty']:
         ece_u, ece_v = get_ECE(predicted_flow[-1], predicted_uncertainty[-1], target_flow[0], target_mask[0],
                                loss_type=_config['der_type'])
 
+    # Log images in Weights&Biases
     if log_image:
         rgb_images = []
         predicted_flow_images = []
@@ -187,32 +271,15 @@ def test(model, rgb_img, lidar_img, target_flow, target_mask, log_image, _config
                                                             target_flow_images)))
         wandb.log({'examples': images_for_wandb}, commit=False)
 
-    # total_trasl_error = 0.0
-    # total_rot_error = 0.0
-    # for j in range(rgb_img.shape[0]):
-    #    total_trasl_error += torch.norm(target_transl[j] - transl_err[j]) * 100.
-    #    total_rot_error += quaternion_distance(target_rot[j], rot_err[j])
-
     del predicted_flow
-    return total_loss.detach(), epe.detach(), ece_u, ece_v, ece_dict, f1  # , total_trasl_error.item(), total_rot_error
+    return total_loss.detach(), epe.detach(), ece_u, ece_v, ece_dict, f1
 
 
 def main(gpu, _config, common_seed, world_size):
     global EPOCH
     rank = gpu
 
-    # aff_per_proc = 24 / torch.cuda.device_count()
-    # os.environ["KMP_AFFINITY"] = f"granularity=fine,proclist=[{int(aff_per_proc*gpu)}-{int(aff_per_proc*(gpu+1))}],explicit"
-
-    # os.environ["OMP_SCHEDULE"] = "STATIC"
-    # os.environ["OMP_PROC_BIND"] = "CLOSE"
-    # if gpu == 0:
-    #     os.environ["KMP_AFFINITY"] = f"granularity=fine,verbose,proclist=[0-6],explicit"
-    #     os.environ["GOMP_CPU_AFFINITY"] = "0-6"
-    # else:
-    #     os.environ["KMP_AFFINITY"] = f"granularity=fine,verbose,proclist=[13-18],explicit"
-    #     os.environ["GOMP_CPU_AFFINITY"] = "13-18"
-
+    # Setup Distributed Training
     dist.init_process_group(
         backend='nccl',
         init_method='env://',
@@ -220,6 +287,7 @@ def main(gpu, _config, common_seed, world_size):
         rank=rank
     )
 
+    # Set random seeds
     local_seed = (common_seed + common_seed ** gpu) ** 2
     local_seed = local_seed % (2 ** 32 - 1)
     np.random.seed(common_seed)
@@ -227,6 +295,8 @@ def main(gpu, _config, common_seed, world_size):
     torch.cuda.set_device(gpu)
     device = torch.device(gpu)
     print(f"Process {rank}, seed {common_seed}")
+    
+    # Setup Weights&Biases
     wandb_run_id = 'remove'
     if _config['wandb'] and rank == 0:
         if _config['resume_id'] is None:
@@ -239,27 +309,21 @@ def main(gpu, _config, common_seed, world_size):
     if rank == 0:
         logger = init_logger(f'/tmp/{wandb_run_id}.log', _config['resume'], _config['wandb'])
 
-    # torch.multiprocessing.set_sharing_strategy('file_system')
-
-    # occlusion_threshold = _config['occlusion_threshold']
     img_shape = _config['img_shape']
 
-    _config["savemodel"] = os.path.join(_config["savemodel"], 'argoverse')
     if not os.path.exists(_config["savemodel"]) and rank == 0:
         os.mkdir(_config["savemodel"])
     _config["savemodel"] = os.path.join(_config["savemodel"], wandb_run_id)
     if not os.path.exists(_config["savemodel"]) and rank == 0:
         os.mkdir(_config["savemodel"])
-
-    # def init_fn(x):
-    #     return _init_fn(x, local_seed)
-
+    
     # Training and test set creation
     num_worker = _config['num_worker']
     batch_size = _config['batch_size']
 
     model = get_model(_config, img_shape)
 
+    # Load weights if resuming training
     if _config['weights'] is not None:
         if rank == 0:
             logger.info(f"Loading weights from {_config['weights']}")
@@ -273,6 +337,7 @@ def main(gpu, _config, common_seed, world_size):
             for name, param in model.named_parameters():
                 if 'update_block_unc' not in name:
                     param.requires_grad = False
+    
     model.train()
     model = DistributedDataParallel(model.to(device), device_ids=[rank], output_device=rank,
                                     find_unused_parameters=_config['find_unused_parameter'])
@@ -280,56 +345,7 @@ def main(gpu, _config, common_seed, world_size):
     if rank == 0:
         logger.info('Number of model parameters: {}'.format(sum([p.data.nelement() for p in model.parameters()])))
 
-    parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
-    if _config['optimizer'] == 'adam':
-        optimizer = optim.Adam(parameters, lr=_config['BASE_LEARNING_RATE'], weight_decay=5e-6)
-    elif _config['optimizer'] == 'adamW':
-        optimizer = optim.AdamW(parameters, lr=_config['BASE_LEARNING_RATE'], weight_decay=5e-6)
-    else:
-        optimizer = optim.SGD(parameters, lr=_config['BASE_LEARNING_RATE'], momentum=0.9,
-                              weight_decay=5e-6, nesterov=True)
-    if _config['scheduler'] == 'multistep':
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 40], gamma=0.5)
-    elif _config['scheduler'] == 'cycle_one':
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, _config['BASE_LEARNING_RATE'],
-                                                        epochs=_config['epochs'],
-                                                        steps_per_epoch=36000 // (batch_size * world_size),
-                                                        pct_start=0.4, div_factor=10,
-                                                        final_div_factor=100000)
-    elif _config['scheduler'] == 'cycle_multi':
-        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, _config['BASE_LEARNING_RATE'] / 10,
-                                                      _config['BASE_LEARNING_RATE'],
-                                                      mode='triangular2',
-                                                      step_size_up=(10 * 36000) // (batch_size * world_size),
-                                                      cycle_momentum=False)
-
-    scaler = amp.GradScaler(enabled=_config['amp'])
-    if rank == 0 and _config['amp']:
-        logger.info("Using Mixed Precision")
-
     starting_epoch = 0
-    if _config['weights'] is not None and _config['resume']:
-        checkpoint = torch.load(_config['weights'], map_location='cpu')
-        opt_state_dict = checkpoint['optimizer']
-        optimizer.load_state_dict(opt_state_dict)
-        starting_epoch = checkpoint['epoch'] + 1
-        if _config['scheduler'] == 'multistep':
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 40], gamma=0.5,
-                                                             last_epoch=starting_epoch)
-        elif _config['scheduler'] == 'cycle_one':
-            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, _config['BASE_LEARNING_RATE'],
-                                                            epochs=_config['epochs'] + 1,
-                                                            steps_per_epoch=36000 // (batch_size * world_size),
-                                                            pct_start=0.4, div_factor=10,
-                                                            final_div_factor=100000, last_epoch=starting_epoch * (
-                            36000 // (batch_size * world_size)))
-        elif _config['scheduler'] == 'cycle_multi':
-            scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, _config['BASE_LEARNING_RATE'] / 10,
-                                                          _config['BASE_LEARNING_RATE'],
-                                                          mode='triangular2',
-                                                          step_size_up=(10 * 36000) // (batch_size * world_size),
-                                                          cycle_momentum=False, last_epoch=starting_epoch * (
-                            36000 // (batch_size * world_size)))
     if _config['wandb'] and rank == 0:
         wandb.watch(model)
 
@@ -369,7 +385,8 @@ def main(gpu, _config, common_seed, world_size):
                                                      dataset='kitti')
         if not _config['kitti_only']:
             dataset_argo = DatasetGeneralExtrinsicCalib(train_directories_argo, train=True, max_r=_config['max_r'],
-                                                        max_t=_config['max_t'], use_reflectance=_config['use_reflectance'],
+                                                        max_t=_config['max_t'],
+                                                        use_reflectance=_config['use_reflectance'],
                                                         normalize_images=_config['normalize_images'],
                                                         dataset='argoverse', cam='ring_front_center')
             dataset_pandaset = DatasetPandasetExtrinsicCalib(train_directories_pandaset, train=True,
@@ -400,10 +417,10 @@ def main(gpu, _config, common_seed, world_size):
             dataset_argo = torch.utils.data.Subset(dataset_argo, argo_idxs[:len(dataset_pandaset) * 2])
             dataset_train = torch.utils.data.ConcatDataset(
                 [dataset_argo, dataset_kitti, dataset_pandaset, dataset_pandaset2])
+            if len(dataset_train) != 36000 and rank == 0:
+                logger.warning(f"Dataset size is different than what is should be:\n"
+                               f"Expected size: 36000, Current size: {len(dataset_train)}")
 
-        # dataset_train = dataset_kitti
-        # dataset_train = dataset_argo
-        # dataset_train = dataset_pandaset
         if epoch == starting_epoch:
             total_iter = starting_epoch * len(dataset_train)
 
@@ -424,25 +441,8 @@ def main(gpu, _config, common_seed, world_size):
                                                          use_reflectance=_config['use_reflectance'],
                                                          normalize_images=_config['normalize_images'],
                                                          dataset='kitti')
-        if not _config['kitti_only']:
-            dataset_val_argo = DatasetGeneralExtrinsicCalib(test_directories_argo, train=False, max_r=_config['max_r'],
-                                                            max_t=_config['max_t'], use_reflectance=_config['use_reflectance'],
-                                                            normalize_images=_config['normalize_images'],
-                                                            dataset='argoverse', cam='ring_front_center')
-            dataset_val_pandaset1 = DatasetPandasetExtrinsicCalib(test_directories_pandaset, train=False,
-                                                                  max_r=_config['max_r'], max_t=_config['max_t'],
-                                                                  use_reflectance=_config['use_reflectance'],
-                                                                  normalize_images=_config['normalize_images'],
-                                                                  camera='front_camera')
-            dataset_val_pandaset2 = DatasetPandasetExtrinsicCalib(test_directories_pandaset, train=False,
-                                                                  max_r=_config['max_r'], max_t=_config['max_t'],
-                                                                  use_reflectance=_config['use_reflectance'],
-                                                                  normalize_images=_config['normalize_images'],
-                                                                  sensor_id=1, camera='front_camera')
 
         dataset_val = dataset_val_kitti
-        # dataset_val = dataset_val_argo
-        # dataset_val = torch.utils.data.ConcatDataset([dataset_val_argo, dataset_val_kitti, dataset_val_pandaset1, dataset_val_pandaset2])
 
         train_sampler = torch.utils.data.distributed.DistributedSampler(
             dataset_train,
@@ -479,6 +479,33 @@ def main(gpu, _config, common_seed, world_size):
                                                     drop_last=True,
                                                     sampler=val_sampler,
                                                     pin_memory=True)
+    
+    # Setup Optimizer and Scheduler
+    parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
+    optimizer = optim.Adam(parameters, lr=_config['BASE_LEARNING_RATE'], weight_decay=5e-6)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, _config['BASE_LEARNING_RATE'],
+                                                    epochs=_config['epochs'],
+                                                    steps_per_epoch=len(dataset_train) // (batch_size * world_size),
+                                                    pct_start=0.4, div_factor=10,
+                                                    final_div_factor=100000)
+
+    scaler = amp.GradScaler(enabled=_config['amp'])
+    if rank == 0 and _config['amp']:
+        logger.info("Using Mixed Precision")
+
+    # Load optimizer and scheduler state if resuming training
+    starting_epoch = 0
+    if _config['weights'] is not None and _config['resume']:
+        checkpoint = torch.load(_config['weights'], map_location='cpu')
+        opt_state_dict = checkpoint['optimizer']
+        optimizer.load_state_dict(opt_state_dict)
+        starting_epoch = checkpoint['epoch'] + 1
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, _config['BASE_LEARNING_RATE'],
+                                                        epochs=_config['epochs'] + 1,
+                                                        steps_per_epoch=len(dataset_train) // (batch_size * world_size),
+                                                        pct_start=0.4, div_factor=10,
+                                                        final_div_factor=100000, last_epoch=starting_epoch * (
+                                                        len(dataset_train) // (batch_size * world_size)))
 
         if rank == 0:
             logger.info(f'Len Train: {len(TrainImgLoader)}')
@@ -491,30 +518,14 @@ def main(gpu, _config, common_seed, world_size):
         local_loss = 0.
         local_epe = 0.
         total_train_epe = 0.
-        if _config['scheduler'] == 'exp':
-            if _config['wandb'] and rank == 0:
-                wandb.log({'LR': _config['BASE_LEARNING_RATE'] *
-                                 math.exp((1 - epoch) * 4e-2)}, commit=False)
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = _config['BASE_LEARNING_RATE'] * \
-                                    math.exp((1 - epoch) * 4e-2)
-        elif _config['scheduler'] == 'multistep' and epoch != starting_epoch:
-            scheduler.step()
-            if _config['wandb'] and rank == 0:
-                wandb.log({'LR': scheduler.get_last_lr()[0]}, commit=False)
-        elif _config['scheduler'].startswith('cycle') and epoch != starting_epoch:
+        if epoch != starting_epoch:
             if _config['wandb'] and rank == 0:
                 wandb.log({'LR': scheduler.get_last_lr()[0]}, commit=False)
 
         time_for_N_it = time.time()
         batch_idx = 0
-        ## Training ##
+        # Training #
         for batch_idx, sample in enumerate(TrainImgLoader):
-            # total_train_loss = 1
-            # total_train_epe = 1
-            # batch_idx = 1
-            # if batch_idx == 3:
-            #     break
             start_time = time.time()
             lidar_input = []
             rgb_input = []
@@ -534,164 +545,12 @@ def main(gpu, _config, common_seed, world_size):
 
             sample['tr_error'] = sample['tr_error'].to(device)
             sample['rot_error'] = sample['rot_error'].to(device)
-            # sample['tr_error'] = torch.zeros((batch_size, 3), dtype=torch.float, device=device)
-            # sample['rot_error'] = torch.zeros((batch_size, 4), dtype=torch.float, device=device)
-            # sample['rot_error'][:, 0] = 1.
 
             for idx in range(len(sample['rgb'])):
                 # ProjectPointCloud in RT-pose
 
-                real_shape = [sample['rgb'][idx].shape[0], sample['rgb'][idx].shape[1], sample['rgb'][idx].shape[2]]
-
-                sample['point_cloud'][idx] = sample['point_cloud'][idx].to(device)
-                pc_rotated = sample['point_cloud'][idx].clone()
-                reflectance = None
-                if _config['use_reflectance']:
-                    reflectance = sample['reflectance'][idx].to(device)
-
-                R = mathutils.Quaternion(sample['rot_error'][idx]).to_matrix()
-                R.resize_4x4()
-                T = mathutils.Matrix.Translation(sample['tr_error'][idx])
-                try:
-                    RT = T @ R
-                except:
-                    RT = T * R
-
-                # TODO: UNCOMMENT THIS FOR TRAINING
-                pc_rotated = rotate_back(pc_rotated, RT)
-
-                # if _config['max_depth'] < 100.:
-                #     pc_rotated = pc_rotated[:, pc_rotated[0, :] < _config['max_depth']].clone()
-
-                cam_params = sample['calib'][idx].to(device)
-                cam_model = CameraModel()
-                cam_model.focal_length = cam_params[:2]
-                cam_model.principal_point = cam_params[2:]
-                uv_lidar, depth, _, refl = cam_model.project_pytorch(pc_rotated, real_shape, reflectance)
-                uv_lidar = uv_lidar.t().int().contiguous()
-                depth_img = torch.zeros(real_shape[:2], device=device, dtype=torch.float)
-                depth_img += 1000.
-                depth_img = visibility.depth_image(uv_lidar, depth, depth_img, uv_lidar.shape[0], real_shape[1],
-                                                   real_shape[0])
-                temp_index = (depth_img == 1000.)
-                depth_img[temp_index] = 0.
-
-                depth_img_no_occlusion = torch.zeros_like(depth_img, device=device)
-                depth_img_no_occlusion = depth_img
-
-                uv_lidar = uv_lidar.long()
-                indexes = depth_img_no_occlusion[uv_lidar[:, 1], uv_lidar[:, 0]] == depth
-                if _config['use_reflectance']:
-                    refl_img = torch.zeros(real_shape[:2], device=device, dtype=torch.float)
-                    refl_img[uv_lidar[indexes, 1], uv_lidar[indexes, 0]] = refl[0, indexes]
-
-                depth_img_no_occlusion /= _config['max_depth']
-                depth_img_no_occlusion = depth_img_no_occlusion.unsqueeze(0)
-                if _config['use_reflectance']:
-                    depth_img_no_occlusion = torch.cat((depth_img_no_occlusion, refl_img.unsqueeze(0)))
-
-                uv_lidar = uv_lidar[indexes]
-                
-                flow, _, new_indexes = get_flow_zforward(uv_lidar.float(), depth[indexes], RT, cam_model,
-                                                        [real_shape[0], real_shape[1], 3],
-                                                        scale_flow=False, reverse=False,
-                                                        get_valid_indexes=True)
-                uv_flow = uv_lidar
-                
-                # if _config['flow_direction'] == 'lidar2rgb':
-                #     flow, _, new_indexes = get_flow(uv_lidar.float(), depth[indexes], RT, cam_model,
-                #                                     [real_shape[0], real_shape[1], 3],
-                #                                     scale_flow=False, al_contrario=_config['al_contrario'],
-                #                                     get_valid_indexes=True)
-                #     uv_flow = uv_lidar
-
-                uv_flow = uv_flow[new_indexes].clone()
-                flow = flow[new_indexes].clone()
-
-                rgb = sample['rgb'][idx].to(device)
-
-                if _config['normalize_images']:
-                    rgb = rgb / 255.
-                    rgb = (rgb - mean) / std
-                rgb = rgb.permute(2, 0, 1)
-
-                flow_img = torch.zeros((real_shape[0], real_shape[1], 2), device=device, dtype=torch.float)
-                flow_img[uv_flow[:, 1], uv_flow[:, 0]] = flow
-                flow_mask = torch.zeros((real_shape[0], real_shape[1]), device=device, dtype=torch.int)
-                flow_mask[uv_flow[:, 1], uv_flow[:, 0]] = 1
-
-                # Scale by half if the image is from the ARGO dataset
-                if real_shape[1] == 1920 and _config['subset_argoverse']:
-                    flow_img, flow_mask = downsample_flow_and_mask(flow_img, flow_mask, 2, scale_flow=True)
-                    rgb = nn.functional.interpolate(rgb.unsqueeze(0), scale_factor=0.5)[0]
-                    depth_img_no_occlusion = downsample_depth(depth_img_no_occlusion.permute(1, 2, 0).contiguous(), 2)
-                    depth_img_no_occlusion = depth_img_no_occlusion.permute(2, 0, 1)
-                    real_shape[0] = real_shape[0] // 2
-                    real_shape[1] = real_shape[1] // 2
-
-                # Random Scale Augmentation
-                # if _config['scale_aug']:
-                #     scale = np.random.uniform(0.8, 1.2)
-                #     flow_img, flow_mask = resize_sparse_flow_map_torch(flow_img, flow_mask, scale, scale)
-                #     rgb = nn.functional.interpolate(rgb.unsqueeze(0), scale_factor=scale)[0]
-                #     # TODO: how to change this?
-                #     depth_img_no_occlusion = \
-                #     nn.functional.interpolate(depth_img_no_occlusion.unsqueeze(0), scale_factor=scale)[0]
-                #     real_shape = [rgb.shape[1], rgb.shape[2], rgb.shape[0]]
-
-                if img_shape is not None and img_shape[0] <= real_shape[0]:
-                    h, w = real_shape[:2]
-                    th, tw = img_shape
-                    crop_top = random.randint(0, h - th)
-                    # crop_left = random.randint(0, w - tw)
-                    rgb = rgb[:, crop_top:crop_top + th, :]
-                    depth_img_no_occlusion = depth_img_no_occlusion[:, crop_top:crop_top + th, :]
-                    flow_img = flow_img[crop_top:crop_top + th, :, :]
-                    flow_mask = flow_mask[crop_top:crop_top + th, :]
-                if img_shape is not None and img_shape[1] <= real_shape[1]:
-                    h, w = real_shape[:2]
-                    th, tw = img_shape
-                    # crop_top = random.randint(0, h - th)
-                    crop_left = random.randint(0, w - tw)
-                    rgb = rgb[:, :, crop_left:crop_left + tw]
-                    depth_img_no_occlusion = depth_img_no_occlusion[:, :, crop_left:crop_left + tw]
-                    flow_img = flow_img[:, crop_left:crop_left + tw, :]
-                    flow_mask = flow_mask[:, crop_left:crop_left + tw]
-                if img_shape is not None and (img_shape[0] >= real_shape[0] or img_shape[1] >= real_shape[1]):
-                    # PAD ONLY ON RIGHT AND BOTTOM SIDE, IN ORDER TO BE CONSISTENT WITH FLOW
-                    shape_pad = [0, 0, 0, 0]
-
-                    shape_pad[3] = max(0, (img_shape[0] - real_shape[0]))  # // 2
-                    shape_pad[1] = max(0, (img_shape[1] - real_shape[1]))  # // 2 + 1
-
-                    rgb = F.pad(rgb, shape_pad)
-                    depth_img_no_occlusion = F.pad(depth_img_no_occlusion, shape_pad)
-                    flow_img = F.pad(flow_img.permute(2, 0, 1), shape_pad).permute(1, 2, 0)
-                    flow_mask = F.pad(flow_mask, shape_pad)
-
-                if _config['fourier_levels'] >= 0:
-                    depth_img_no_occlusion = depth_img_no_occlusion.squeeze()
-                    mask = (depth_img_no_occlusion > 0).clone()
-                    fourier_feats = []
-                    for L in range(_config['fourier_levels']):
-                        fourier_feat = depth_img_no_occlusion * np.pi * 2 ** L
-                        fourier_feats.append(fourier_feat.sin())
-                        fourier_feats.append(fourier_feat.cos())
-                    # depth_img_no_occlusion = torch.stack(fourier_feats)
-                    depth_img_no_occlusion = torch.stack(fourier_feats + [depth_img_no_occlusion])
-                    depth_img_no_occlusion = depth_img_no_occlusion * mask.unsqueeze(0)
-                # aaa = overlay_imgs(rgb, depth_img_no_occlusion.unsqueeze(0))
-                if _config['debug']:
-                    io.imshow(rgb.permute(1, 2, 0).cpu().numpy())
-                    io.show()
-                    io.imshow(flow_mask.cpu().numpy())
-                    io.show()
-                    io.imshow(flow_img[:, :, 1].cpu().numpy())
-                    io.show()
-                    io.imshow(flow_to_color(flow_img.cpu().numpy()))
-                    io.show()
-                    io.imshow(depth_img_no_occlusion[0].cpu().numpy())
-                    io.show()
+                depth_img_no_occlusion, flow_img, flow_mask, rgb = prepare_input(_config, device, flow_img, flow_mask,
+                                                                                 idx, img_shape, mean, sample, std)
 
                 flow_img = flow_img.contiguous()
                 flow_mask = flow_mask.contiguous()
@@ -716,6 +575,18 @@ def main(gpu, _config, common_seed, world_size):
                 target_mask5.append(down_mask5.repeat(2, 1, 1).float().clone())
                 target_flow6.append(down_flow6.permute(2, 0, 1).clone())
                 target_mask6.append(down_mask6.repeat(2, 1, 1).float().clone())
+
+                if _config['debug']:
+                    io.imshow(rgb.permute(1, 2, 0).cpu().numpy())
+                    io.show()
+                    io.imshow(flow_mask.cpu().numpy())
+                    io.show()
+                    io.imshow(flow_img[:, :, 1].cpu().numpy())
+                    io.show()
+                    io.imshow(flow_to_color(flow_img.cpu().numpy()))
+                    io.show()
+                    io.imshow(depth_img_no_occlusion[0].cpu().numpy())
+                    io.show()
 
             lidar_input = torch.stack(lidar_input)
             rgb_input = torch.stack(rgb_input)
@@ -766,22 +637,10 @@ def main(gpu, _config, common_seed, world_size):
                 total_train_loss += loss.item()
                 total_train_epe += epe.item()
                 total_iter += len(sample['rgb']) * world_size
-            del loss
-            del epe
-            del target_mask1
-            del target_mask2
-            del target_mask3
-            del target_mask4
-            del target_mask5
-            del target_mask6
-            del target_flow1
-            del target_flow2
-            del target_flow3
-            del target_flow4
-            del target_flow5
-            del target_flow6
-            del rgb_input
-            del lidar_input
+            del loss, epe
+            del target_mask1, target_mask2, target_mask3, target_mask4, target_mask5, target_mask6
+            del target_flow1, target_flow2, target_flow3, target_flow4, target_flow5, target_flow6
+            del rgb_input, lidar_input
 
         if rank == 0:
             logger.info("------------------------------------")
@@ -825,124 +684,11 @@ def main(gpu, _config, common_seed, world_size):
             for idx in range(len(sample['rgb'])):
                 # ProjectPointCloud in RT-pose
 
-                real_shape = [sample['rgb'][idx].shape[0], sample['rgb'][idx].shape[1], sample['rgb'][idx].shape[2]]
+                depth_img_no_occlusion, flow_img, flow_mask, rgb = prepare_input(_config, device, flow_img, flow_mask,
+                                                                                 idx, img_shape, mean, sample, std)
 
-                sample['point_cloud'][idx] = sample['point_cloud'][idx].to(device)
-                pc_rotated = sample['point_cloud'][idx].clone()
-                reflectance = None
-                if _config['use_reflectance']:
-                    reflectance = sample['reflectance'][idx].to(device)
-
-                R = mathutils.Quaternion(sample['rot_error'][idx]).to_matrix()
-                R.resize_4x4()
-                T = mathutils.Matrix.Translation(sample['tr_error'][idx])
-                try:
-                    RT = T @ R
-                except:
-                    RT = T * R
-
-                pc_rotated = rotate_back(pc_rotated, RT)
-
-                # if _config['max_depth'] < 100.:
-                #     pc_rotated = pc_rotated[:, pc_rotated[0, :] < _config['max_depth']].clone()
-
-                cam_params = sample['calib'][idx].to(device)
-                cam_model = CameraModel()
-                cam_model.focal_length = cam_params[:2]
-                cam_model.principal_point = cam_params[2:]
-                uv_lidar, depth, _, refl = cam_model.project_pytorch(pc_rotated, real_shape, reflectance)
-                uv_lidar = uv_lidar.t().int().contiguous()
-                depth_img = torch.zeros(real_shape[:2], device=device, dtype=torch.float)
-                depth_img += 1000.
-                depth_img = visibility.depth_image(uv_lidar, depth, depth_img, uv_lidar.shape[0], real_shape[1],
-                                                   real_shape[0])
-                depth_img[depth_img == 1000.] = 0.
-
-                depth_img_no_occlusion = depth_img
-
-                uv_lidar = uv_lidar.long()
-                indexes = depth_img_no_occlusion[uv_lidar[:, 1], uv_lidar[:, 0]] == depth
-                if _config['use_reflectance']:
-                    refl_img = torch.zeros(real_shape[:2], device=device, dtype=torch.float)
-                    refl_img[uv_lidar[indexes, 1], uv_lidar[indexes, 0]] = refl[0, indexes]
-
-                depth_img_no_occlusion /= _config['max_depth']
-                depth_img_no_occlusion = depth_img_no_occlusion.unsqueeze(0)
-                if _config['use_reflectance']:
-                    depth_img_no_occlusion = torch.cat((depth_img_no_occlusion, refl_img.unsqueeze(0)))
-
-                uv_lidar = uv_lidar[indexes]
-                
-                flow, _, new_indexes = get_flow_zforward(uv_lidar.float(), depth[indexes], RT, cam_model,
-                                                        [real_shape[0], real_shape[1], 3],
-                                                        scale_flow=False, reverse=False,
-                                                        get_valid_indexes=True)
-                uv_flow = uv_lidar
-                
-                # if _config['flow_direction'] == 'lidar2rgb':
-                #     flow, _, new_indexes = get_flow(uv_lidar.float(), depth[indexes], RT, cam_model,
-                #                                     [real_shape[0], real_shape[1], 3],
-                #                                     scale_flow=False, reverse=False,
-                #                                     get_valid_indexes=True)
-                #     uv_flow = uv_lidar
-
-                uv_flow = uv_flow[new_indexes].clone()
-                flow = flow[new_indexes].clone()
-
-                rgb = sample['rgb'][idx].to(device)
-
-                if _config['normalize_images']:
-                    rgb = rgb / 255.
-                    rgb = (rgb - mean) / std
-                rgb = rgb.permute(2, 0, 1)
-
-                flow_img = torch.zeros((real_shape[0], real_shape[1], 2), device=device, dtype=torch.float)
-                flow_img[uv_flow[:, 1], uv_flow[:, 0]] = flow
-                flow_mask = torch.zeros((real_shape[0], real_shape[1]), device=device, dtype=torch.int)
-                flow_mask[uv_flow[:, 1], uv_flow[:, 0]] = 1
-
-                # Scale by half if the image is from the ARGO dataset
-                if real_shape[1] == 1920 and _config['subset_argoverse']:
-                    flow_img, flow_mask = downsample_flow_and_mask(flow_img, flow_mask, 2, scale_flow=True)
-                    rgb = nn.functional.interpolate(rgb.unsqueeze(0), scale_factor=0.5)[0]
-                    depth_img_no_occlusion = downsample_depth(depth_img_no_occlusion.permute(1, 2, 0).contiguous(), 2)
-                    depth_img_no_occlusion = depth_img_no_occlusion.permute(2, 0, 1)
-                    real_shape[0] = real_shape[0] // 2
-                    real_shape[1] = real_shape[1] // 2
-                if img_shape is not None and img_shape[0] <= real_shape[0] and img_shape[1] <= real_shape[1]:
-                    h, w = real_shape[:2]
-                    th, tw = img_shape
-                    crop_top = random.randint(0, h - th)
-                    crop_left = random.randint(0, w - tw)
-                    rgb = rgb[:, crop_top:crop_top + th, crop_left:crop_left + tw].clone()
-                    depth_img_no_occlusion = depth_img_no_occlusion[:, crop_top:crop_top + th,
-                                             crop_left:crop_left + tw].clone()
-                    flow_img = flow_img[crop_top:crop_top + th, crop_left:crop_left + tw, :].clone()
-                    flow_mask = flow_mask[crop_top:crop_top + th, crop_left:crop_left + tw].clone()
-                elif img_shape is not None and img_shape[0] >= real_shape[0] and img_shape[1] >= real_shape[1]:
-                    # PAD ONLY ON RIGHT AND BOTTOM SIDE, IN ORDER TO BE CONSISTENT WITH FLOW
-                    shape_pad = [0, 0, 0, 0]
-
-                    shape_pad[3] = (img_shape[0] - real_shape[0])  # // 2
-                    shape_pad[1] = (img_shape[1] - real_shape[1])  # // 2 + 1
-
-                    rgb = F.pad(rgb, shape_pad)
-                    depth_img_no_occlusion = F.pad(depth_img_no_occlusion, shape_pad)
-                    flow_img = F.pad(flow_img.permute(2, 0, 1), shape_pad).permute(1, 2, 0).contiguous()
-                    flow_mask = F.pad(flow_mask, shape_pad)
-
-                if _config['fourier_levels'] >= 0:
-                    depth_img_no_occlusion = depth_img_no_occlusion.squeeze()
-                    mask = (depth_img_no_occlusion > 0).clone()
-                    fourier_feats = []
-                    for L in range(_config['fourier_levels']):
-                        fourier_feat = depth_img_no_occlusion * np.pi * 2 ** L
-                        fourier_feats.append(fourier_feat.sin())
-                        fourier_feats.append(fourier_feat.cos())
-                    # depth_img_no_occlusion = torch.stack(fourier_feats)
-                    depth_img_no_occlusion = torch.stack(fourier_feats + [depth_img_no_occlusion])
-                    depth_img_no_occlusion = depth_img_no_occlusion * mask.unsqueeze(0)
-
+                flow_img = flow_img.contiguous()
+                flow_mask = flow_mask.contiguous()
                 rgb_input.append(rgb)
                 lidar_input.append(depth_img_no_occlusion)
 
@@ -1019,29 +765,13 @@ def main(gpu, _config, common_seed, world_size):
                 if _config['uncertainty']:
                     total_test_ece_u += ece_u.item()
                     total_test_ece_v += ece_v.item()
-            del loss
-            del epe
-            del target_mask1
-            del target_mask2
-            del target_mask3
-            del target_mask4
-            del target_mask5
-            del target_mask6
-            del target_flow1
-            del target_flow2
-            del target_flow3
-            del target_flow4
-            del target_flow5
-            del target_flow6
-            del rgb_input
-            del indexes
-            del flow, flow_img, flow_mask, rgb
-            del lidar_input
+            del loss, epe
+            del target_mask1, target_mask2, target_mask3, target_mask4, target_mask5, target_mask6
+            del target_flow1, target_flow2, target_flow3, target_flow4, target_flow5, target_flow6
+            del rgb_input, flow_img, flow_mask, rgb, lidar_input
             del down_flow2, down_flow3, down_flow4, down_flow5, down_flow6
             del down_mask2, down_mask3, down_mask4, down_mask5, down_mask6
-            del uv_lidar
-            del depth_img, depth, depth_img_no_occlusion
-            del pc_rotated
+            del depth_img_no_occlusion
 
         if rank == 0:
             logger.info("------------------------------------")
@@ -1105,12 +835,7 @@ def main(gpu, _config, common_seed, world_size):
             old_save_filename = savefilename
 
         # Cleanup
-        del sample
-        del dataset_kitti
-        del dataset_train
-        del dataset_val
-        del TrainImgLoader
-        # torch.cuda.empty_cache()
+        del sample, dataset_kitti, dataset_train, dataset_val, TrainImgLoader
 
     if rank == 0:
         logger.info('full training time = %.2f HR' % ((time.time() - start_full_time) / 3600))
@@ -1130,13 +855,10 @@ def str2bool(v):
 def real_main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--savemodel', type=str, default='/media/RAIDONE/CATTANEOD/regnet/checkpoints_CMRFlowNet/')
-    # parser.add_argument('--dataset', type=str, default='argoverse')
     parser.add_argument('--data_folder_argo', type=str, default='/media/DATA/ARGO/only_center_camera/')
     parser.add_argument('--data_folder_kitti', type=str, default='/home/cattaneod/Datasets/KITTI/sequences/')
     parser.add_argument('--data_folder_panda', type=str, default='/media/RAIDONE/DATASETS/pandaset')
     parser.add_argument('--use_reflectance', action='store_true', default=False)
-    # parser.add_argument('--occlusion_kernel', type=int, default=18)
-    # parser.add_argument('--occlusion_threshold', type=float, default=3.9999)
     parser.add_argument('--epochs', type=int, default=150)
     parser.add_argument('--BASE_LEARNING_RATE', type=float, default=3e-4)
     parser.add_argument('--max_t', type=float, default=1.5)
@@ -1146,39 +868,28 @@ def real_main():
     parser.add_argument('--num_worker', type=int, default=2)
     parser.add_argument('--optimizer', type=str, default='adam')
     parser.add_argument('--weights', type=str, default=None)
-    # parser.add_argument('--dropout', type=float, default=0.)
     parser.add_argument('--max_depth', type=float, default=160.)
-    # parser.add_argument('--num_scales', type=int, default=1)
     parser.add_argument('--resume', action='store_true', default=False)
     parser.add_argument('--resume_id', type=str, default=None)
     parser.add_argument('--no_scheduler', default=False, action='store_true')
     parser.add_argument('--scheduler', type=str, default="cycle_one")
-    # parser.add_argument('--scaled_gt', default=False, action='store_true')
-    # parser.add_argument('--al_contrario', default=False, action='store_true')
-    # parser.add_argument('--initial_pool', type=str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--upsample_method', type=str, default="transposed")
     parser.add_argument('--img_shape', type=int, nargs=2, default=[320, 960])
-    # parser.add_argument('--smooth_loss', type=float, default=0)
     parser.add_argument('--wandb', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--not_normalize_images', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--debug', action='store_true', default=False)
-    # parser.add_argument('--flow_direction', type=str, default='lidar2rgb')
     parser.add_argument('--master_port', type=str, default=None)
     parser.add_argument('--gpu', type=int, default=-1)
     parser.add_argument('--gpu_count', type=int, default=-1)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--amp', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--print_every', type=int, default=500)
-    # parser.add_argument('--maps_folder_kitti', type=str, default='point_cloud')
-    # parser.add_argument('--maps_folder_argo', type=str, default='point_cloud')
     parser.add_argument('--uncertainty', type=str2bool, nargs='?', const=True, default=False)
-    # parser.add_argument('--scale_aug', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--kitti_only', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--fourier_levels', type=int, default=12)
     parser.add_argument('--weight_nll', type=float, default=-1.0)
-    parser.add_argument('--der_lambda', type=float, default=0.001)
     parser.add_argument('--der_type', type=str, default="NLL",
-                        choices=["NLL"])  # THIS SHOULD BE CALLED UNC_TYPE
+                        choices=["NLL"])  # Type of uncertainty
     parser.add_argument('--unc_freeze', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--finetune', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--find_unused_parameter', type=str2bool, nargs='?', const=True, default=False)
@@ -1187,7 +898,6 @@ def real_main():
     args = parser.parse_args()
     # print(args)
     _config = vars(args)
-    # _config['scheduler'] = not _config['no_scheduler']
     if _config['no_scheduler']:
         _config['scheduler'] = False
     _config['normalize_images'] = not _config['not_normalize_images']
