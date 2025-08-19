@@ -34,6 +34,7 @@ If you use CMRNext, please cite:
 ```
 
 ## News
+- [x] 2025/08/19 - [Extrinsic calibration training](#Extrinsic-Calibration-Training)
 - [x] 2025/05/07 - Localization inference code on Pandaset
 - [x] 2025/05/02 - We released the [inference code for calibration on custom datasets](#Inference-on-your-own-dataset), and we added some visualization.
 - [x] 2025/04/11 - We released the [inference code for monocular localization on Argoverse](#Monocular-Localization-in-LiDAR-Maps)
@@ -43,7 +44,7 @@ If you use CMRNext, please cite:
 
 
 ## TODO
-- [ ] Training code
+- [ ] Training code for localization
 
 
 ## Abstract
@@ -208,7 +209,7 @@ If you see no points projection in the top image, or if the points are flipped 9
 
 The `--downsample` argument should give better results for most use cases, but if your camera images looks similar to the ones in the KITTI dataset, then you might try removing the argument and check if the results are better.
 
-### Training
+### Extrinsic Calibration Training
 To train the Camera-LiDAR extrinsic calibration models, run the following commands:
 ```bash
 python3 train_calibration.py  --savemodel /data/iter1/ --data_folder_argo /data/argoverse/argoverse-tracking/ --data_folder_kitti /data/KITTI/sequences/ --data_folder_panda /data/pandaset/ --max_r 20 --max_t 1.5
