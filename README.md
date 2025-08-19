@@ -110,7 +110,7 @@ Tested with `Docker version 28.0.1` and `NVIDIA Container Toolkit version 1.17.5
 - Prepare using GUIs in the container: `xhost +local:docker`.
 - Start container and mount the folder where your dataset are located: 
 ```bash
-docker run --runtime=nvidia -it -v /tmp/.X11-unix:/tmp/.X11-unix -v PATH_TO_DATA:/data -e DISPLAY -e XAUTHORITY -e NVIDIA_DRIVER_CAPABILITIES=all cmrnext
+docker run --runtime=nvidia --shm-size=2g -it -v /tmp/.X11-unix:/tmp/.X11-unix -v PATH_TO_DATA:/data -e DISPLAY -e XAUTHORITY -e NVIDIA_DRIVER_CAPABILITIES=all cmrnext
 ```
 - Within the container, move to the code folder `cd /root/CMRNext/`
 
@@ -208,6 +208,14 @@ If you see no points projection in the top image, or if the points are flipped 9
 
 The `--downsample` argument should give better results for most use cases, but if your camera images looks similar to the ones in the KITTI dataset, then you might try removing the argument and check if the results are better.
 
+### Training
+To train the Camera-LiDAR extrinsic calibration models, run the following commands:
+```bash
+python3 train_calibration.py  --savemodel /data/iter1/ --data_folder_argo /data/argoverse/argoverse-tracking/ --data_folder_kitti /data/KITTI/sequences/ --data_folder_panda /data/pandaset/ --max_r 20 --max_t 1.5
+python3 train_calibration.py  --savemodel /data/iter2/ --data_folder_argo /data/argoverse/argoverse-tracking/ --data_folder_kitti /data/KITTI/sequences/ --data_folder_panda /data/pandaset/ --max_r 1 --max_t 0.1
+python3 train_calibration.py  --savemodel /data/iter3/ --data_folder_argo /data/argoverse/argoverse-tracking/ --data_folder_kitti /data/KITTI/sequences/ --data_folder_panda /data/pandaset/ --max_r 0.2 --max_t 0.05
+```
+
 ## Monocular Localization in LiDAR Maps
 This section contains the steps to perform inference for monocular localization in LiDAR maps. First, we need to create the LiDAR maps for each dataset.
 
@@ -282,20 +290,6 @@ docker: Error response from daemon: Unknown runtime specified nvidia.
 Run the docker with this command instead:
 ```bash
 docker run --gpus=all -it -v /tmp/.X11-unix:/tmp/.X11-unix -v PATH_TO_DATA:/data -e DISPLAY -e XAUTHORITY -e NVIDIA_DRIVER_CAPABILITIES=all cmrnext
-```
-</details>
-
-<details>
-<summary>RuntimeError: DataLoader worker (pid xxxx) is killed by signal: Bus error. It is possible that dataloader's workers are out of shared memory. Please try to raise your shared memory limit.</summary>
-
-If you receive this error while running the training/inference script
-
-```bash
-RuntimeError: DataLoader worker (pid xxxx) is killed by signal: Bus error. It is possible that dataloader's workers are out of shared memory. Please try to raise your shared memory limit.
-```
-Delete the docker image, and create it again adding more shared memory by adding this flag
-```bash
---shm-size=2g
 ```
 </details>
 

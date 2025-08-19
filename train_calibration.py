@@ -67,7 +67,7 @@ def uncertainty_to_color(_tensor, mask=None):
     return color
 
 
-def prepare_input(_config, device, flow_img, flow_mask, idx, img_shape, mean, sample, std):
+def prepare_input(_config, device, idx, img_shape, mean, sample, std):
     real_shape = [sample['rgb'][idx].shape[0], sample['rgb'][idx].shape[1], sample['rgb'][idx].shape[2]]
     sample['point_cloud'][idx] = sample['point_cloud'][idx].to(device)
     pc_rotated = sample['point_cloud'][idx].clone()
@@ -320,6 +320,7 @@ def main(gpu, _config, common_seed, world_size):
     # Training and test set creation
     num_worker = _config['num_worker']
     batch_size = _config['batch_size']
+    starting_epoch = 0
 
     model = get_model(_config, img_shape)
 
@@ -342,10 +343,26 @@ def main(gpu, _config, common_seed, world_size):
     model = DistributedDataParallel(model.to(device), device_ids=[rank], output_device=rank,
                                     find_unused_parameters=_config['find_unused_parameter'])
 
+
+    # Setup Optimizer and Scheduler
+    parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
+    optimizer = optim.Adam(parameters, lr=_config['BASE_LEARNING_RATE'], weight_decay=5e-6)
+    scheduler = None
+
+    scaler = amp.GradScaler(enabled=_config['amp'])
+    if rank == 0 and _config['amp']:
+        logger.info("Using Mixed Precision")
+
+    # Load optimizer and scheduler state if resuming training
+    if _config['weights'] is not None and _config['resume']:
+        checkpoint = torch.load(_config['weights'], map_location='cpu')
+        opt_state_dict = checkpoint['optimizer']
+        optimizer.load_state_dict(opt_state_dict)
+        starting_epoch = checkpoint['epoch'] + 1
+
     if rank == 0:
         logger.info('Number of model parameters: {}'.format(sum([p.data.nelement() for p in model.parameters()])))
 
-    starting_epoch = 0
     if _config['wandb'] and rank == 0:
         wandb.watch(model)
 
@@ -422,6 +439,21 @@ def main(gpu, _config, common_seed, world_size):
                                f"Expected size: 36000, Current size: {len(dataset_train)}")
 
         if epoch == starting_epoch:
+            if starting_epoch == 0:
+                scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, _config['BASE_LEARNING_RATE'],
+                                                                epochs=_config['epochs'],
+                                                                steps_per_epoch=len(dataset_train) // (
+                                                                            batch_size * world_size),
+                                                                pct_start=0.4, div_factor=10,
+                                                                final_div_factor=100000)
+            else:
+                scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, _config['BASE_LEARNING_RATE'],
+                                                                epochs=_config['epochs'] + 1,
+                                                                steps_per_epoch=len(dataset_train) // (
+                                                                            batch_size * world_size),
+                                                                pct_start=0.4, div_factor=10,
+                                                                final_div_factor=100000, last_epoch=starting_epoch * (
+                            len(dataset_train) // (batch_size * world_size)))
             total_iter = starting_epoch * len(dataset_train)
 
         test_directories_kitti = []
@@ -479,33 +511,6 @@ def main(gpu, _config, common_seed, world_size):
                                                     drop_last=True,
                                                     sampler=val_sampler,
                                                     pin_memory=True)
-    
-    # Setup Optimizer and Scheduler
-    parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
-    optimizer = optim.Adam(parameters, lr=_config['BASE_LEARNING_RATE'], weight_decay=5e-6)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, _config['BASE_LEARNING_RATE'],
-                                                    epochs=_config['epochs'],
-                                                    steps_per_epoch=len(dataset_train) // (batch_size * world_size),
-                                                    pct_start=0.4, div_factor=10,
-                                                    final_div_factor=100000)
-
-    scaler = amp.GradScaler(enabled=_config['amp'])
-    if rank == 0 and _config['amp']:
-        logger.info("Using Mixed Precision")
-
-    # Load optimizer and scheduler state if resuming training
-    starting_epoch = 0
-    if _config['weights'] is not None and _config['resume']:
-        checkpoint = torch.load(_config['weights'], map_location='cpu')
-        opt_state_dict = checkpoint['optimizer']
-        optimizer.load_state_dict(opt_state_dict)
-        starting_epoch = checkpoint['epoch'] + 1
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, _config['BASE_LEARNING_RATE'],
-                                                        epochs=_config['epochs'] + 1,
-                                                        steps_per_epoch=len(dataset_train) // (batch_size * world_size),
-                                                        pct_start=0.4, div_factor=10,
-                                                        final_div_factor=100000, last_epoch=starting_epoch * (
-                                                        len(dataset_train) // (batch_size * world_size)))
 
         if rank == 0:
             logger.info(f'Len Train: {len(TrainImgLoader)}')
@@ -549,7 +554,7 @@ def main(gpu, _config, common_seed, world_size):
             for idx in range(len(sample['rgb'])):
                 # ProjectPointCloud in RT-pose
 
-                depth_img_no_occlusion, flow_img, flow_mask, rgb = prepare_input(_config, device, flow_img, flow_mask,
+                depth_img_no_occlusion, flow_img, flow_mask, rgb = prepare_input(_config, device,
                                                                                  idx, img_shape, mean, sample, std)
 
                 flow_img = flow_img.contiguous()
@@ -684,7 +689,7 @@ def main(gpu, _config, common_seed, world_size):
             for idx in range(len(sample['rgb'])):
                 # ProjectPointCloud in RT-pose
 
-                depth_img_no_occlusion, flow_img, flow_mask, rgb = prepare_input(_config, device, flow_img, flow_mask,
+                depth_img_no_occlusion, flow_img, flow_mask, rgb = prepare_input(_config, device,
                                                                                  idx, img_shape, mean, sample, std)
 
                 flow_img = flow_img.contiguous()
