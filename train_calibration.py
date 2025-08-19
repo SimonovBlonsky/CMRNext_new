@@ -903,6 +903,8 @@ def real_main():
     args = parser.parse_args()
     # print(args)
     _config = vars(args)
+    if _config['uncertainty']:
+        raise NotImplementedError("Training with uncertainty is still untested.")
     if _config['no_scheduler']:
         _config['scheduler'] = False
     _config['normalize_images'] = not _config['not_normalize_images']
