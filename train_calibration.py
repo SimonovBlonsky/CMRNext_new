@@ -375,7 +375,7 @@ def main(gpu, _config, common_seed, world_size):
 
     # total_iter = starting_epoch * len(dataset)
     total_iter = 0
-    for epoch in range(starting_epoch, _config['epochs'] + 1):
+    for epoch in range(starting_epoch, _config['epochs']):
 
         train_directories_kitti = []
         for subdir in ['03', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19',

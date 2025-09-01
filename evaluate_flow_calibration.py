@@ -66,7 +66,10 @@ def prepare_input(cam_params, pc_rotated, real_shape, reflectance, _config, chan
     depth_img = visibility.depth_image(uv, depth, depth_img, uv.shape[0], real_shape[1], real_shape[0])
     depth_img[depth_img == 1000.] = 0.
 
-    depth_img_no_occlusion = depth_img
+    depth_img_no_occlusion = torch.zeros_like(depth_img, device='cuda')
+    depth_img_no_occlusion = visibility.visibility2(depth_img, cam_params, depth_img_no_occlusion,
+                                                    depth_img.shape[1], depth_img.shape[0],
+                                                    _config['occlusion_threshold'], _config['occlusion_kernel'])
 
     uv = uv.long()
 
@@ -155,6 +158,8 @@ def evaluate_calibration(_config, seed):
     _config['use_reflectance'] = checkpoint['config']['use_reflectance']
     _config['initial_pool'] = True
     _config['upsample_method'] = checkpoint['config']['upsample_method']
+    _config['occlusion_kernel'] = 9
+    _config['occlusion_threshold'] = 3.9999
     _config['scaled_gt'] = False
     _config['uncertainty'] = False
     _config['der_type'] = "NLL"
@@ -389,12 +394,11 @@ def evaluate_calibration(_config, seed):
                 # Upsample if necessary
                 if _config['dataset'] in ['argoverse', 'pandaset'] or _config['downsample']:
                     predicted_flow = list(predicted_flow)
-                    for scale in range(len(predicted_flow)):
-                        predicted_flow[scale] *= 2
-                        predicted_flow[scale] = F.interpolate(predicted_flow[scale], scale_factor=2, mode='bilinear')
-                        if _config['uncertainty']:
-                            predicted_uncertainty[scale] = F.interpolate(predicted_uncertainty[scale], scale_factor=2,
-                                                                         mode='bilinear')
+                    predicted_flow[-1] *= 2
+                    predicted_flow[-1] = F.interpolate(predicted_flow[-1], scale_factor=2, mode='bilinear')
+                    if _config['uncertainty']:
+                        predicted_uncertainty[-1] = F.interpolate(predicted_uncertainty[-1], scale_factor=2,
+                                                                  mode='bilinear')
 
             up_flow = predicted_flow[-1]
 
@@ -570,7 +574,13 @@ def evaluate_calibration(_config, seed):
                                                        real_shape[1], real_shape[0])
                 new_depth_img[new_depth_img == 1000.] = 0.
 
-                new_depth_img_no_occlusion = new_depth_img
+                new_depth_img_no_occlusion = torch.zeros_like(new_depth_img, device='cuda')
+                new_depth_img_no_occlusion = visibility.visibility2(new_depth_img, cam_params,
+                                                                    new_depth_img_no_occlusion,
+                                                                    new_depth_img.shape[1], new_depth_img.shape[0],
+                                                                    _config['occlusion_threshold'],
+                                                                    _config['occlusion_kernel'])
+
                 lidar_flow = new_depth_img_no_occlusion.unsqueeze(0).unsqueeze(0)
                 viz_final = overlay_imgs(sample['rgb'][idx].cuda(), lidar_flow, max_depth=_config['max_depth'] / 2,
                                          close_thr=1000)

@@ -290,7 +290,7 @@ docker: Error response from daemon: Unknown runtime specified nvidia.
 ```
 Run the docker with this command instead:
 ```bash
-docker run --gpus=all -it -v /tmp/.X11-unix:/tmp/.X11-unix -v PATH_TO_DATA:/data -e DISPLAY -e XAUTHORITY -e NVIDIA_DRIVER_CAPABILITIES=all cmrnext
+docker run --gpus=all --shm-size=2g -it -v /tmp/.X11-unix:/tmp/.X11-unix -v PATH_TO_DATA:/data -e DISPLAY -e XAUTHORITY -e NVIDIA_DRIVER_CAPABILITIES=all cmrnext
 ```
 </details>
 
