@@ -60,6 +60,8 @@ RUN sed -i "s|self.sequence + '.')||g" /root/pykitti/pykitti/odometry.py
 WORKDIR /root/pykitti
 RUN python3 setup.py install
 
+RUN apt-get update && apt-get install -y python3-tk
+
 WORKDIR /
 SHELL ["bash", "--command"]
 ENV SHELL /usr/bin/bash
