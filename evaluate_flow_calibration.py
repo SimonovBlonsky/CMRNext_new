@@ -27,7 +27,7 @@ from models.get_model import get_model
 from quaternion_distances import quaternion_loss
 
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 from utils import (downsample_depth, merge_inputs, get_flow_zforward, quat2mat, tvector2mat,

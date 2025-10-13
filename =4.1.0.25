@@ -1,0 +1,7 @@
+Collecting opencv-python
+  Downloading opencv_python-4.12.0.88-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (19 kB)
+Requirement already satisfied: numpy<2.0 in /mnt/nas_9/group/chenguyuan/anaconda3/envs/cmrnext/lib/python3.8/site-packages (from opencv-python) (1.24.4)
+Downloading opencv_python-4.12.0.88-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (67.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 67.0/67.0 MB 40.1 MB/s eta 0:00:00
+Installing collected packages: opencv-python
+Successfully installed opencv-python-4.12.0.88
