@@ -86,18 +86,18 @@ def _get_point_cloud_reader(file_extension, first_scan_file):
         except:
             pass
 
-        try:
-            import trimesh
+        # try:
+        #     import trimesh
 
-            trimesh.load(first_scan_file)
+        #     trimesh.load(first_scan_file)
 
-            class ReadTriMesh:
-                def __call__(self, file):
-                    return np.asarray(trimesh.load(file).vertices)
+        #     class ReadTriMesh:
+        #         def __call__(self, file):
+        #             return np.asarray(trimesh.load(file).vertices)
 
-            return ReadTriMesh()
-        except:
-            pass
+        #     return ReadTriMesh()
+        # except:
+        #     pass
 
         try:
             from pyntcloud import PyntCloud
@@ -372,7 +372,8 @@ class DatasetPandasetExtrinsicCalib(Dataset):
         self.normalize_images = normalize_images
         self.sensor_id = sensor_id
         self.maps_folder = 'lidar'
-        self.extension = 'pkl.gz'
+        # self.extension = 'pkl.gz'
+        self.extension = 'pkl'
         self.camera = camera
 
         self.all_files = []

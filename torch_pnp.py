@@ -34,6 +34,12 @@ from utils import (downsample_depth, merge_inputs, get_flow_zforward, quat2mat, 
                    quaternion_from_matrix, EndPointError, rotate_forward, quaternion_median,
                    average_quaternions, rotate_back, quaternion_mode, str2bool, overlay_imgs)
 
+from epropnp.camera import PerspectiveCamera
+from epropnp.cost_fun import AdaptiveHuberPnPCost
+from epropnp.levenberg_marquardt import LMSolver
+from epropnp.epropnp import EProPnP6DoF
+from scipy.spatial.transform import Rotation as R
+
 rcParams["figure.raise_window"] = False
 torch.backends.cudnn.benchmark = True
 torch.use_deterministic_algorithms(False)
@@ -475,6 +481,22 @@ def evaluate_calibration(_config, seed):
                                               points_2d.astype(np.float32).copy(), obj_coord_zforward.shape[0],
                                               200, 2., cam_mat.astype(np.float32)
                                               )
+            
+            # Gauss-Newton optimize
+            x2d = x2d.reshape(bs, -1, 2)
+            w2d = w2d.reshape(bs, -1, 2) / wh_unit[:, None, None]
+            x3d = x3d.reshape(bs, -1, 3)
+            camera = PerspectiveCamera(
+                cam_mats=cam_intrinsic[None].expand(bs, -1, -1), z_min=0.01)
+            cost_fun = AdaptiveHuberPnPCost(
+                relative_delta=0.1)
+            
+            epropnp = EProPnP6DoF(
+                mc_samples=512,
+                num_iter=4,
+                solver=LMSolver(
+                    dof=6,
+                    num_iter=3)).cpu()
 
             transl = cuda_pnp[0, [0, 1, 2]]
             rot_mat = cuda_pnp[:, 3:6].T
