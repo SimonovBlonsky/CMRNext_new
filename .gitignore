@@ -12,3 +12,6 @@
 *.pyc
 .vscode/*
 wandb/*
+/visibility_pkg/build/*
+/visibility_pkg/build/temp.linux-x86_64-cpython-38/
+/checkpoints/
